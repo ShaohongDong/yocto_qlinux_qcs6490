@@ -6,6 +6,11 @@ them to a microSD card or UFS module.
 The machine is pinned to Radxa `linux-qcom` 7.0.11-6. There is no Q6A fallback
 to the layer's 6.18 recipe; rebuild external kernel modules after upgrading.
 
+Q6A uses source-built embloader 0.7 at `EFI/BOOT/BOOTAA64.EFI`. Its BLS entry
+under `loader/entries/` loads the matching raw kernel, initramfs and board DTB
+from `RadxaOS/<kernel-release>/`. The machine selects this layout through
+`QCOM_ESP_IMAGE`; other machines retain their default ESP provider.
+
 > The Q6A boots from the Qualcomm boot chain and UEFI stored in SPI NOR. The
 > images produced here start at the EFI System Partition; they do not contain a
 > qcomflash boot-firmware payload.
@@ -51,6 +56,10 @@ kas build --target qcom-multimedia-proprietary-efi-ufs-4k-image "$KAS_CONFIG"
 
 When this repository replaces the SDK's bundled `meta-qcom` layer, select the
 Q6A machine in `conf/local.conf` and build the two minimal images explicitly:
+
+For an eSDK with locked signatures, include `kmod kmod-native` in
+`SIGGEN_UNLOCKED_RECIPES` in `conf/unlocked-sigs.inc`. This allows the Zstd
+module support to be rebuilt instead of reusing the original SDK tools.
 
 ```bash
 source ./environment-setup-armv8a-qcom-linux

@@ -9,6 +9,7 @@ from radxa_dragon_audit import cli
 PROFILE = {
     "name": "Q6A",
     "machine": "radxa-dragon-q6a",
+    "boot_mode": "embloader-bls",
     "dtb": "qcs6490-radxa-dragon-q6a.dtb",
     "compatibles": ("radxa,dragon-q6a", "qcom,qcm6490"),
     "bios_version": "260815",

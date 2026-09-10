@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import tarfile
 import uuid
 import xml.etree.ElementTree as ET
 import zlib
@@ -58,8 +59,8 @@ def find_tool(name):
     return path
 
 
-def dtb_root_stringlist_property(path, property_name):
-    """Read a root-node string-list property without requiring libfdt tools."""
+def dtb_nodes(path):
+    """Read node properties without requiring libfdt tools."""
     data = path.read_bytes()
     require(len(data) >= 40, f"{path.name}: truncated FDT header")
     (
@@ -86,17 +87,20 @@ def dtb_root_stringlist_property(path, property_name):
     structure_end = structure_offset + structure_size
     strings_end = strings_offset + strings_size
     offset = structure_offset
-    depth = -1
+    stack = []
+    nodes = {}
     while offset + 4 <= structure_end:
         token = struct.unpack_from(">I", data, offset)[0]
         offset += 4
         if token == FDT_BEGIN_NODE:
             nul = data.find(b"\0", offset, structure_end)
             require(nul >= 0, f"{path.name}: unterminated FDT node name")
-            depth += 1
+            stack.append(data[offset:nul].decode("ascii"))
+            nodes["/".join(stack) or "/"] = {}
             offset = (nul + 4) & ~3
         elif token == FDT_END_NODE:
-            depth -= 1
+            require(stack, f"{path.name}: unbalanced FDT nodes")
+            stack.pop()
         elif token == FDT_PROP:
             require(offset + 8 <= structure_end, f"{path.name}: truncated FDT property")
             length, name_offset = struct.unpack_from(">II", data, offset)
@@ -109,18 +113,143 @@ def dtb_root_stringlist_property(path, property_name):
             name = data[name_start:name_end].decode("ascii")
             value = data[offset : offset + length]
             offset = (offset + length + 3) & ~3
-            if depth == 0 and name == property_name:
-                require(value.endswith(b"\0"), f"{path.name}: malformed {property_name}")
-                return tuple(
-                    item.decode("utf-8") for item in value.rstrip(b"\0").split(b"\0")
-                )
+            require(stack, f"{path.name}: property outside a node")
+            nodes["/".join(stack) or "/"][name] = value
         elif token == FDT_NOP:
             continue
         elif token == FDT_END:
             break
         else:
             raise RuntimeError(f"{path.name}: unknown FDT token {token}")
-    raise RuntimeError(f"{path.name}: root property is missing: {property_name}")
+    return nodes
+
+
+def dtb_root_stringlist_property(path, property_name):
+    value = dtb_nodes(path).get("/", {}).get(property_name, b"")
+    require(value.endswith(b"\0"), f"{path.name}: missing or malformed {property_name}")
+    return tuple(item.decode("utf-8") for item in value.rstrip(b"\0").split(b"\0"))
+
+
+def audit_q6a_pmic(dtb):
+    nodes = dtb_nodes(dtb)
+    gpio = "/soc@0/spmi@c440000/pmic@1/gpio@8800"
+    adc = gpio + "/adc-default-state"
+    require(gpio in nodes and adc in nodes, "Q6A PMIC ADC pinctrl is missing")
+    require("pinctrl-0" not in nodes[gpio], "Q6A GPIO still has default pinctrl")
+    require(gpio + "/hardware-version-sel-state" not in nodes,
+            "Q6A firmware-owned GPIO7 state is still present")
+    props = nodes[adc]
+    require(props.get("pins") == b"gpio2\0" and props.get("function") == b"normal\0"
+            and "bias-high-impedance" in props and "power-source" not in props,
+            "Q6A ADC GPIO configuration mismatch")
+    vadc = nodes.get("/soc@0/spmi@c440000/pmic@0/adc@3100", {})
+    require("phandle" in props and vadc.get("pinctrl-0") == props["phandle"]
+            and vadc.get("pinctrl-names") == b"default\0",
+            "Q6A VADC does not select the GPIO2 default state")
+
+
+def kernel_release(deploy, machine):
+    with tarfile.open(deploy / f"modules-{machine}.tgz") as archive:
+        releases = {parts[2] for member in archive
+                    if len(parts := Path(member.name).parts) >= 3
+                    and parts[:2] == ("lib", "modules")}
+    require(len(releases) == 1, "expected exactly one deployed kernel release")
+    return releases.pop()
+
+
+def validate_module_dependencies(contents):
+    entries = {}
+    for line in contents.splitlines():
+        name, separator, dependencies = line.partition(":")
+        require(separator, "malformed modules.dep entry")
+        entries[name] = dependencies.split()
+    required = {
+        "aic8800_fdrv.ko": ("cfg80211.ko.zst", "aic_load_fw.ko"),
+        "aic_btusb.ko": ("bluetooth.ko.zst",),
+    }
+    for module, dependencies in required.items():
+        matches = [name for name in entries if Path(name).name == module]
+        require(len(matches) == 1, f"modules.dep is missing {module}")
+        indexed = {Path(name).name for name in entries[matches[0]]}
+        require(set(dependencies) <= indexed, f"{module}: incomplete module dependencies")
+    require(any(Path(name).name == "autofs4.ko.zst" for name in entries),
+            "modules.dep is missing compressed autofs4")
+    for dependencies in entries.values():
+        require(all(name in entries for name in dependencies), "unindexed module dependency")
+    return entries
+
+
+def audit_module_dependencies(image, release):
+    listing = run([find_tool("debugfs"), "-R", "ls -p /usr/lib/modules", str(image)])
+    names = {fields[5] for line in listing.splitlines()
+             if len(fields := line.split("/")) > 5 and fields[5] not in (".", "..")}
+    require(names == {release}, f"{image.name}: rootfs kernel releases differ from deploy")
+    base = f"/usr/lib/modules/{release}"
+    contents = run([find_tool("debugfs"), "-R", f"cat {base}/modules.dep", str(image)])
+    entries = validate_module_dependencies(contents)
+    required_names = {"cfg80211.ko.zst", "bluetooth.ko.zst", "autofs4.ko.zst",
+                      "aic8800_fdrv.ko", "aic_load_fw.ko", "aic_btusb.ko"}
+    audit_ext4_paths(image, [f"{base}/{name}" for name in entries
+                             if Path(name).name in required_names])
+    return len(entries)
+
+
+def parse_bls(contents):
+    fields = {}
+    for line in contents.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, value = line.split(maxsplit=1)
+        require(key not in fields, f"duplicate BLS field: {key}")
+        fields[key] = value
+    return fields
+
+
+def audit_embloader(image, esp, sector_size, directory, deploy, profile, release):
+    directory.mkdir()
+    fat = f"{image}@@{esp['first_lba'] * sector_size}"
+
+    def extract(source, name):
+        target = directory / name
+        run([find_tool("mcopy"), "-i", fat, "::" + source, str(target)])
+        return target
+
+    loader = extract("/EFI/BOOT/BOOTAA64.EFI", "boot.efi")
+    data = loader.read_bytes()
+    require(len(data) >= 64 and data[:2] == b"MZ", "invalid embloader DOS header")
+    offset = struct.unpack_from("<I", data, 0x3c)[0]
+    require(offset + 6 <= len(data) and data[offset:offset + 4] == b"PE\0\0"
+            and struct.unpack_from("<H", data, offset + 4)[0] == 0xaa64,
+            "embloader is not AArch64 PE/COFF")
+    require(sha256(loader) == sha256(deploy / "embloader-0.7.efi"),
+            "ESP embloader differs from source-built deploy artifact")
+    config = parse_bls(extract("/loader/loader.conf", "loader.conf").read_text())
+    require(config.get("default") == "radxa-dragon-q6a" and config.get("timeout") == "3",
+            "unexpected embloader default or timeout")
+    listing = run([find_tool("mdir"), "-b", "-i", fat, "::/loader/entries/"])
+    require(len(listing.splitlines()) == 1, "expected exactly one BLS entry")
+    entry = parse_bls(extract("/loader/entries/radxa-dragon-q6a.conf", "entry.conf").read_text())
+    require(entry.get("version") == release, "BLS kernel release mismatch")
+    options = entry.get("options", "").split()
+    require("root=PARTLABEL=rootfs" in options and "rw" in options and "rootwait" in options
+            and any(value.startswith("console=") for value in options), "BLS boot arguments missing")
+    require(not any(value.startswith(("earlycon", "ignore_loglevel")) for value in options),
+            "diagnostic arguments left in production entry")
+    require({"clk_ignore_unused", "coherent_pool=2M", "irqchip.gicv3_pseudo_nmi=0"}
+            <= set(options), "Q6A platform boot arguments missing")
+    for field, filename, deployed in (
+        ("linux", "Image", "Image"),
+        ("initrd", "initramfs.cpio.gz", f"initramfs-rootfs-image-{profile['machine']}.cpio.gz"),
+        ("devicetree", "q6a.dtb", profile["dtb"]),
+    ):
+        expected = f"/RadxaOS/{release}/{filename}"
+        require(entry.get(field) == expected, f"unexpected BLS {field} path")
+        require(sha256(extract(expected, filename)) == sha256(deploy / deployed),
+                f"BLS {field} differs from deployed artifact")
+    result = subprocess.run([find_tool("mdir"), "-i", fat, "::/EFI/Linux/*.efi"],
+                            capture_output=True, text=True)
+    require(result.returncode != 0, "Q6A ESP still contains a UKI")
+    return sha256(loader)
 
 
 def pe_section(path, section_name):
@@ -357,7 +486,8 @@ def audit_deploy(profile, deploy):
         / profile["bios_board"]
     )
 
-    for path in (dtb, uki, sd, ufs):
+    bls_boot = profile.get("boot_mode") == "embloader-bls"
+    for path in ((dtb, sd, ufs) if bls_boot else (dtb, uki, sd, ufs)):
         require(path.is_file(), f"missing artifact: {path}")
 
     compatibles = dtb_root_stringlist_property(dtb, "compatible")
@@ -369,6 +499,25 @@ def audit_deploy(profile, deploy):
     sd_partitions = audit_image(sd, Path(str(sd) + ".bmap"), 512)
     ufs_partitions = audit_image(ufs, Path(str(ufs) + ".bmap"), 4096)
     audit_ext4_paths(deploy / f"{sd_stem}.ext4", profile.get("rootfs_paths", ()))
+
+    if bls_boot:
+        release = kernel_release(deploy, machine)
+        audit_q6a_pmic(dtb)
+        images = {}
+        with tempfile.TemporaryDirectory(prefix=f"{machine}-bls-audit-") as temp:
+            for key, image, partitions, sectors, stem in (
+                ("sector_512", sd, sd_partitions, 512, sd_stem),
+                ("ufs_sector_4096", ufs, ufs_partitions, 4096, ufs_stem),
+            ):
+                loader_hash = audit_embloader(image, partitions[0], sectors,
+                                             Path(temp) / key, deploy, profile, release)
+                modules = audit_module_dependencies(deploy / f"{stem}.ext4", release)
+                images[key] = {"sha256": sha256(image), "embloader_sha256": loader_hash,
+                               "partitions": partitions, "indexed_modules": modules}
+        audit_bios(bios, profile["bios_required"])
+        return {"status": "passed", "machine": machine, "boot_mode": "embloader-bls",
+                "kernel_release": release, "dtb_sha256": sha256(dtb), "images": images,
+                "bundle": audit_bundle(profile, deploy, sd, ufs)}
 
     with tempfile.TemporaryDirectory(prefix=f"{machine}-uki-audit-") as directory_name:
         directory = Path(directory_name)

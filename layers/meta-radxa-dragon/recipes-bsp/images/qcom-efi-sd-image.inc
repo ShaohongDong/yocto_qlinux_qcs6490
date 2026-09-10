@@ -10,10 +10,11 @@ WKS_FILE = "qcom-efi-sd.wks.in"
 # WIC only needs its built-in rawcopy and rootfs plugins for this layout.
 WICVARS:remove = "BBLAYERS"
 
-# Derive the WIC root partition label from the UKI root argument. Machines
+# Derive the WIC root partition label from the kernel root argument. Machines
 # using this common layout should set QCOM_BOOTIMG_ROOTFS to PARTLABEL=<label>.
 QCOM_EFI_ROOTFS_LABEL ?= "${@d.getVar('QCOM_BOOTIMG_ROOTFS').split('=', 1)[1] if (d.getVar('QCOM_BOOTIMG_ROOTFS') or '').startswith('PARTLABEL=') else 'rootfs'}"
 
-# The ESP contains the UKI assembled by esp-qcom-image.
-do_image_wic[depends] += "esp-qcom-image:do_image_complete"
-do_image_wic[vardeps] += "QCOM_EFI_ROOTFS_LABEL"
+# Boards may select a different EFI loader and ESP layout.
+QCOM_ESP_IMAGE ?= "esp-qcom-image"
+do_image_wic[depends] += "${QCOM_ESP_IMAGE}:do_image_complete"
+do_image_wic[vardeps] += "QCOM_EFI_ROOTFS_LABEL QCOM_ESP_IMAGE"
