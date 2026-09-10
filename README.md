@@ -23,6 +23,9 @@ it is defined because the SDK environment rejects it.
   tests, and board-specific documentation.
 - `layers/meta-qcom-distro/` supplies the Qualcomm distribution policy.
 - `layers/oe-core/` provides BitBake and the OpenEmbedded core metadata.
+- `apps/` is the permanent YAML-managed application layer. Each application
+  can carry its own userspace sources, systemd units, kernel configuration,
+  external modules, and kernel/device-tree patches.
 - `workspace/` is managed by `devtool` for checked-out recipe sources.
 - `tmp/`, `downloads/`, `sstate-cache/`, and `cache/` are generated build state.
 
@@ -71,6 +74,24 @@ devtool build <recipe>
 Preserve wanted source changes before running `devtool reset <recipe>`. Read
 [Repository Guidelines](AGENTS.md) and the layer-level
 [agent guide](layers/meta-radxa-dragon/AGENTS.md) before making broader changes.
+
+## Application Development
+
+Applications are selected one at a time and do not require edits to
+`conf/local.conf`. The manifest declares compatible machines, kernel providers,
+and image targets, so an invalid board/application combination fails instead
+of silently omitting the application:
+
+```sh
+source ./environment-setup-armv8a-qcom-linux
+scripts/qcom-app list
+scripts/qcom-app validate --app example --machine radxa-dragon-q6a
+scripts/qcom-app build --app example --machine radxa-dragon-q6a
+scripts/qcom-app all --app example --machine radxa-dragon-q6a
+```
+
+See [the application layer guide](apps/README.md) for the complete YAML schema,
+CMake/Meson support, kernel and device-tree integration, and reference app.
 
 ## Validation
 

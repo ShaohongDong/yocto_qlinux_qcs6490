@@ -1,0 +1,20 @@
+From 2222222222222222222222222222222222222222 Mon Sep 17 00:00:00 2001
+From: QCOM SDK Developers <qcom-sdk@example.invalid>
+Date: Thu, 10 Sep 2026 00:00:01 +0800
+Subject: [PATCH 2/2] arm64: dts: qcom: include application example node
+
+Include the disabled validation node supplied by the SDK reference
+application.  Keeping it disabled avoids changing board runtime behaviour.
+
+Upstream-Status: Inappropriate [development framework example]
+Signed-off-by: QCOM SDK Developers <qcom-sdk@example.invalid>
+---
+ arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts b/arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts
+index d9eadf398e9f..81df47febee5 100644
+--- a/arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts
++++ b/arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts
+@@ -22,0 +23 @@
++#include "qcom-app-example.dtsi"

@@ -1,0 +1,1 @@
+inherit qcom-app-kernel

@@ -1,0 +1,56 @@
+# Runnable reference application; paths are relative to this directory.
+schema_version: 1
+name: example
+summary: QCOM application framework reference
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+inputs:
+- LICENSE
+- README.md
+- CMakeLists.txt
+- src
+- kernel
+- systemd
+build:
+  system: cmake
+  source: .
+  options: []
+check:
+- /usr/bin/qcom_app_example
+- --self-test
+dependencies:
+  build: []
+  runtime:
+  - kmod
+  - libstdc++
+machines:
+  radxa-dragon-q6a:
+    kernel_providers:
+    - linux-qcom
+    images:
+      default: qcom-minimal-efi-sd-image
+      allowed:
+      - qcom-minimal-efi-sd-image
+      - qcom-minimal-efi-ufs-4k-image
+      - qcom-multimedia-proprietary-efi-sd-image
+      - qcom-multimedia-proprietary-efi-ufs-4k-image
+kernel:
+  config:
+  - kernel/config/example.cfg
+  patches:
+  - kernel/patches/0001-doc-add-qcom-app-example-marker.patch
+  device_tree:
+    files:
+    - source: kernel/dts/qcom-app-example.dtsi
+      target: arch/arm64/boot/dts/qcom/qcom-app-example.dtsi
+    patches:
+    - kernel/patches/0002-arm64-dts-qcom-q6a-include-app-example.patch
+  modules:
+  - kernel/modules/example
+services:
+- source: systemd/qcom-app-example.service
+  enable: true
+  wanted_by: multi-user.target

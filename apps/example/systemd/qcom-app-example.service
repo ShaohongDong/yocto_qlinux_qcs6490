@@ -1,0 +1,12 @@
+[Unit]
+Description=QCOM application framework example
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/sbin/modprobe qcom_app_example
+ExecStart=/usr/bin/qcom_app_example --self-test
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Select, validate, and build one application from the QCOM app layer."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+APPS = ROOT / "apps"
+sys.path.insert(0, str(APPS / "lib"))
+
+from qcom_apps import ManifestError, discover_apps, load_manifest
+
+
+def _machine_exists(machine: str) -> bool:
+    return any(ROOT.glob(f"layers/*/conf/machine/{machine}.conf"))
+
+
+def _recipe_exists(name: str) -> bool:
+    patterns = (f"layers/**/{name}.bb", f"layers/**/{name}_*.bb", f"apps/**/{name}.bb", f"apps/**/{name}_*.bb")
+    return any(any(ROOT.glob(pattern)) for pattern in patterns)
+
+
+def _validate_selection(name: str, machine: str, image: str | None = None):
+    spec = load_manifest(APPS, name)
+    config = spec.machine(machine)
+    selected_image = spec.image(machine, image)
+    if not _machine_exists(machine):
+        raise ManifestError(f"machine is not present in loaded source layers: {machine}")
+    missing_providers = [provider for provider in config["kernel_providers"] if not _recipe_exists(provider)]
+    if missing_providers:
+        raise ManifestError(f"kernel provider recipes not found: {', '.join(missing_providers)}")
+    missing_images = [target for target in config["images"]["allowed"] if not _recipe_exists(target)]
+    if missing_images:
+        raise ManifestError(f"image recipes not found: {', '.join(missing_images)}")
+    return spec, selected_image
+
+
+def _add_selection_arguments(parser: argparse.ArgumentParser, *, image: bool = False) -> None:
+    parser.add_argument("--app", required=True, help="application directory name below apps/")
+    parser.add_argument("--machine", required=True, help="BitBake MACHINE")
+    if image:
+        parser.add_argument("--image", help="allowed image target; defaults to the app manifest mapping")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="construct the BitBake task graph without executing tasks",
+    )
+
+
+def _run_bitbake(args, targets: list[str], image: str) -> int:
+    if not os.environ.get("OECORE_NATIVE_SYSROOT"):
+        raise ManifestError("SDK environment is not active; source ./environment-setup-armv8a-qcom-linux first")
+    bitbake = ROOT / "layers/oe-core/bitbake/bin/bitbake"
+    if not bitbake.is_file():
+        raise ManifestError(f"BitBake executable not found: {bitbake}")
+    config = (
+        f'QCOM_APP = "{args.app}"\n'
+        f'MACHINE = "{args.machine}"\n'
+        f'QCOM_APP_IMAGE = "{image}"\n'
+    )
+    with tempfile.NamedTemporaryFile("w", prefix="qcom-app-", suffix=".conf") as postfile:
+        postfile.write(config)
+        postfile.flush()
+        command = [str(bitbake), "-R", postfile.name]
+        if args.dry_run:
+            command.append("--dry-run")
+        command.extend(targets)
+        return subprocess.run(command, cwd=ROOT, check=False).returncode
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="action", required=True)
+
+    subparsers.add_parser("list", help="list validated application manifests")
+    validate = subparsers.add_parser("validate", help="validate one manifest and its machine mapping")
+    _add_selection_arguments(validate, image=True)
+    for action in ("build", "kernel"):
+        command = subparsers.add_parser(action, help=f"build the selected application's {action} target")
+        _add_selection_arguments(command)
+    for action in ("image", "all"):
+        command = subparsers.add_parser(action, help=f"build the selected application's {action} target")
+        _add_selection_arguments(command, image=True)
+    args = parser.parse_args()
+
+    try:
+        if args.action == "list":
+            for spec in discover_apps(APPS):
+                print(f"{spec.name}\t{spec.build['system']}\t{','.join(sorted(spec.machines))}\t{spec.summary}")
+            return 0
+
+        spec, image = _validate_selection(args.app, args.machine, getattr(args, "image", None))
+        if args.action == "validate":
+            print(f"validated {spec.name} for {args.machine}; image: {image}; digest: {spec.digest}")
+            return 0
+        if args.action == "build":
+            targets = ["qcom-selected-app"]
+        elif args.action == "kernel":
+            targets = ["virtual/kernel"]
+            if spec.kernel["modules"]:
+                targets.append("qcom-selected-app-modules")
+        elif args.action == "image":
+            targets = [image]
+        else:
+            targets = ["qcom-selected-app", "virtual/kernel"]
+            if spec.kernel["modules"]:
+                targets.append("qcom-selected-app-modules")
+            targets.append(image)
+        return _run_bitbake(args, targets, image)
+    except ManifestError as error:
+        parser.error(str(error))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

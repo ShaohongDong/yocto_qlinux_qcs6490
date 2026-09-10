@@ -1,0 +1,29 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: QCOM SDK Developers <qcom-sdk@example.invalid>
+Date: Thu, 10 Sep 2026 00:00:00 +0800
+Subject: [PATCH 1/2] docs: add QCOM application framework marker
+
+This documentation-only file proves that an application's kernel patch list
+is applied without changing runtime kernel behaviour.
+
+Upstream-Status: Inappropriate [development framework example]
+Signed-off-by: QCOM SDK Developers <qcom-sdk@example.invalid>
+---
+ Documentation/dev-tools/qcom-app-example.rst | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+ create mode 100644 Documentation/dev-tools/qcom-app-example.rst
+
+diff --git a/Documentation/dev-tools/qcom-app-example.rst b/Documentation/dev-tools/qcom-app-example.rst
+new file mode 100644
+index 000000000000..d6bbfb349cab
+--- /dev/null
++++ b/Documentation/dev-tools/qcom-app-example.rst
+@@ -0,0 +1,8 @@
++QCOM application framework example
++==================================
++
++This file is installed into the kernel source by the SDK reference
++application.  It is deliberately documentation-only so the example can
++exercise per-application kernel patching without changing runtime behaviour.
++
++Production applications should carry only patches required by their feature.

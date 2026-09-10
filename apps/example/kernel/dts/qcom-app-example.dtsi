@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/ {
+    qcom_app_example: qcom-app-example {
+        compatible = "qcom,app-framework-example";
+        status = "disabled";
+    };
+};
