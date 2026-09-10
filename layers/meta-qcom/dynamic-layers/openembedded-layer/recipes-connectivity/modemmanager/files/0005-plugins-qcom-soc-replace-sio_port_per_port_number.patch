@@ -1,0 +1,45 @@
+From 709075c709e74472ab13ad66009486430fab09a4 Mon Sep 17 00:00:00 2001
+From: Harsh Sharma <hsharm@qti.qualcomm.com>
+Date: Thu, 4 Jun 2026 22:33:19 -0700
+Subject: [PATCH 5/5] plugins: qcom-soc: replace sio_port_per_port_number []
+ with QMI_SIO_PORT_NONE
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The sio_port_per_port_number[] table in
+peek_port_qmi_for_data_bam_dmux()
+was originally meant for older BAM-DMUX configurations (MDM9x25/9x35
+era)
+that relied on SIO-based port binding. Those modems are USB-attached and
+handled by separate plugins — they never reach this function in the
+qcom-soc plugin.
+
+The qcom-soc plugin is designed exclusively for integrated SoC modems
+(9x07/Jolokia and newer) accessed via QRTR. For these, the firmware
+expects ep-type=EMBEDDED and ep-id=0 with no SIO port involvement.
+The sio_port_per_port_number[] table is therefore dead code in this
+context. Replace it with QMI_SIO_PORT_NONE explicitly.
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1452]
+Signed-off-by: Harsh Sharma <hsharm@qti.qualcomm.com>
+---
+ src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c b/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
+index 39c58463..7643b89c 100644
+--- a/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
++++ b/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
+@@ -81,7 +81,7 @@ peek_port_qmi_for_data_bam_dmux (MMBroadbandModemQmi  *self,
+          * interface number/SIO port to make multiplexing work with BAM-DMUX */
+         out_endpoint->type = QMI_DATA_ENDPOINT_TYPE_BAM_DMUX;
+         out_endpoint->interface_number = net_port_number;
+-        out_endpoint->sio_port = sio_port_per_port_number[net_port_number];
++        out_endpoint->sio_port = QMI_SIO_PORT_NONE;
+     }
+ 
+     return found;
+-- 
+2.34.1
+

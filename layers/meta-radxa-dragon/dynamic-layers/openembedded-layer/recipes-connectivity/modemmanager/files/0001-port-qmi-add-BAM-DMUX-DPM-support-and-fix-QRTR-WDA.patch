@@ -1,0 +1,205 @@
+From 9546102dd11d0b8f0a2b4a7d960d1156bfca4bb7 Mon Sep 17 00:00:00 2001
+From: Harsh Sharma <hsharm@qti.qualcomm.com>
+Date: Wed, 27 May 2026 23:35:52 -0700
+Subject: [PATCH 1/4] port/qmi: add BAM-DMUX DPM support and fix QRTR WDA
+ endpoint handling
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1452]
+Signed-off-by: Harsh Sharma <hsharm@qti.qualcomm.com>
+---
+ src/mm-port-qmi.c | 109 ++++++++++++++++++++++++++++++++++++++++++++--
+ src/mm-port-qmi.h |   4 ++
+ 2 files changed, 110 insertions(+), 3 deletions(-)
+
+diff --git a/src/mm-port-qmi.c b/src/mm-port-qmi.c
+index d4c4d64d..67afdae1 100644
+--- a/src/mm-port-qmi.c
++++ b/src/mm-port-qmi.c
+@@ -1767,6 +1767,16 @@ get_data_format_ready (QmiClientWda *client,
+             return;
+         }
+ 
++        /* Some QRTR-based SoC modems return InvalidArgument instead of
++         * MissingArgument when the endpoint TLV is absent. Retry without
++         * the endpoint TLV in that case. */
++        if (g_error_matches (error, QMI_PROTOCOL_ERROR, QMI_PROTOCOL_ERROR_INVALID_ARGUMENT) &&
++            ctx->use_endpoint) {
++            ctx->use_endpoint = FALSE;
++            internal_setup_data_format_context_step (task);
++            return;
++        }
++
+         /* otherwise, fatal */
+         g_task_return_error (task, g_steal_pointer (&error));
+         g_object_unref (task);
+@@ -1802,6 +1812,55 @@ dpm_open_port_ready (QmiClientDpm *client,
+     internal_setup_data_format_context_step (task);
+ }
+ 
++static void
++dpm_open_port_bam_dmux (GTask *task)
++{
++    InternalSetupDataFormatContext                     *ctx;
++    QmiMessageDpmOpenPortInputHardwareDataPortsElement  hw_port;
++    QmiMessageDpmOpenPortInputControlPortsElement       ctrl_port;
++    g_autoptr(GArray)                                   hw_data_ports = NULL;
++    g_autoptr(GArray)                                   ctrl_ports = NULL;
++    g_autoptr(QmiMessageDpmOpenPortInput)               input = NULL;
++
++    ctx  = g_task_get_task_data (task);
++
++    /* BAM-DMUX hardware data port:
++     *   ep-type=BAM_DMUX, iface=0, rx-id=1, tx-id=1
++     * Matches: qmicli --dpm-open-port="hw-data-ep-type=bam-dmux,
++     *   hw-data-ep-iface-number=0,hw-data-rx-id=1,hw-data-tx-id=1" */
++    hw_port.endpoint_type      = QMI_DATA_ENDPOINT_TYPE_BAM_DMUX;
++    hw_port.interface_number   = 0;
++    hw_port.rx_endpoint_number = 1;
++    hw_port.tx_endpoint_number = 1;
++
++    hw_data_ports = g_array_new (FALSE, FALSE,
++                       sizeof (QmiMessageDpmOpenPortInputHardwareDataPortsElement));
++    g_array_append_val (hw_data_ports, hw_port);
++
++    /* BAM-DMUX control port:
++     *   ep-type=BAM_DMUX, iface=0, port-name="bam-dmux"
++     * Matches: qmicli --dpm-open-port="ctrl-ep-type=bam-dmux,
++     *   ctrl-ep-iface-number=0,ctrl-port-name=bam-dmux" */
++    ctrl_port.endpoint_type    = QMI_DATA_ENDPOINT_TYPE_BAM_DMUX;
++    ctrl_port.interface_number = 0;
++    ctrl_port.port_name        = (gchar *) "bam-dmux";
++
++    ctrl_ports = g_array_new (FALSE, FALSE,
++                     sizeof (QmiMessageDpmOpenPortInputControlPortsElement));
++    g_array_append_val (ctrl_ports, ctrl_port);
++
++    input = qmi_message_dpm_open_port_input_new ();
++    qmi_message_dpm_open_port_input_set_hardware_data_ports (input, hw_data_ports, NULL);
++    qmi_message_dpm_open_port_input_set_control_ports (input, ctrl_ports, NULL);
++
++    qmi_client_dpm_open_port (QMI_CLIENT_DPM (ctx->dpm),
++                              input,
++                              10,
++                              g_task_get_cancellable (task),
++                              (GAsyncReadyCallback) dpm_open_port_ready,
++                              task);
++}
++
+ static void
+ dpm_open_port (GTask *task)
+ {
+@@ -1951,7 +2010,9 @@ internal_setup_data_format_context_step (GTask *task)
+ 
+         case INTERNAL_SETUP_DATA_FORMAT_STEP_ALLOCATE_DPM_CLIENT:
+             /* Only allocate new DPM client on first loop */
+-            if ((g_strcmp0 (self->priv->net_driver, "ipa") == 0) && (ctx->data_format_combination_i < 0)) {
++            if (((g_strcmp0 (self->priv->net_driver, "ipa") == 0) ||
++                 (g_strcmp0 (self->priv->net_driver, "bam-dmux") == 0)) &&
++                (ctx->data_format_combination_i < 0)) {
+                 g_assert (!ctx->dpm);
+                 qmi_device_allocate_client (ctx->device,
+                                             QMI_SERVICE_DPM,
+@@ -1966,11 +2027,15 @@ internal_setup_data_format_context_step (GTask *task)
+             /* Fall through */
+ 
+         case INTERNAL_SETUP_DATA_FORMAT_STEP_DPM_OPEN:
+-            /* Only for IPA based setups, open dpm port */
++            /* Only for IPA and BAM-DMUX based setups, open dpm port */
+             if (g_strcmp0 (self->priv->net_driver, "ipa") == 0) {
+                 dpm_open_port (task);
+                 return;
+             }
++            if (g_strcmp0 (self->priv->net_driver, "bam-dmux") == 0) {
++                dpm_open_port_bam_dmux (task);
++                return;
++            }
+             ctx->step++;
+             /* Fall through */
+ 
+@@ -2105,8 +2170,18 @@ internal_setup_data_format (MMPortQmi                      *self,
+     ctx->wda_dl_dap_current = QMI_WDA_DATA_AGGREGATION_PROTOCOL_DISABLED;
+     ctx->wda_dl_dap_requested = QMI_WDA_DATA_AGGREGATION_PROTOCOL_DISABLED;
+ 
+-    if (mm_port_get_subsys (MM_PORT (self)) == MM_PORT_SUBSYS_QRTR)
++    if (mm_port_get_subsys (MM_PORT (self)) == MM_PORT_SUBSYS_QRTR) {
++        /* For QRTR-based SoC modems with an unrecognized net driver, default
++         * to EMBEDDED/0. This is the standard endpoint type for integrated SoC
++         * modems and avoids InvalidArgument errors from modems that require the
++         * endpoint TLV in WDA requests (some firmware returns InvalidArgument
++         * instead of MissingArgument when the endpoint TLV is absent). */
++        if (self->priv->endpoint_type == QMI_DATA_ENDPOINT_TYPE_UNDEFINED) {
++            self->priv->endpoint_type = QMI_DATA_ENDPOINT_TYPE_EMBEDDED;
++            self->priv->endpoint_interface_number = 0;
++        }
+         ctx->use_endpoint = TRUE;
++    }
+ 
+     g_task_set_task_data (task, ctx, (GDestroyNotify) internal_setup_data_format_context_free);
+ 
+@@ -2727,6 +2802,14 @@ mm_port_qmi_is_open (MMPortQmi *self)
+     return !!self->priv->qmi_device;
+ }
+ 
++QmiDevice *
++mm_port_qmi_peek_device (MMPortQmi *self)
++{
++    g_return_val_if_fail (MM_IS_PORT_QMI (self), NULL);
++
++    return self->priv->qmi_device;
++}
++
+ /*****************************************************************************/
+ /* Sets network details that the QMI port should be aware of before even
+  * a data connection is started. */
+@@ -2756,6 +2839,26 @@ mm_port_qmi_set_net_details (MMPortQmi *self,
+     initialize_endpoint_info (self);
+ }
+ 
++void
++mm_port_qmi_set_net_driver (MMPortQmi *self,
++                            const gchar *net_driver)
++{
++    g_assert (MM_IS_PORT_QMI (self));
++
++    if (!self->priv->net_driver) {
++        self->priv->net_driver = g_strdup (net_driver);
++        initialize_endpoint_info (self);
++    }
++}
++
++const gchar *
++mm_port_qmi_get_net_driver (MMPortQmi *self)
++{
++    g_return_val_if_fail (MM_IS_PORT_QMI (self), NULL);
++
++    return self->priv->net_driver;
++}
++
+ /*****************************************************************************/
+ 
+ typedef struct {
+diff --git a/src/mm-port-qmi.h b/src/mm-port-qmi.h
+index 148067fa..12ef3fcb 100644
+--- a/src/mm-port-qmi.h
++++ b/src/mm-port-qmi.h
+@@ -81,6 +81,7 @@ gboolean   mm_port_qmi_open_finish  (MMPortQmi            *self,
+                                      GAsyncResult         *res,
+                                      GError              **error);
+ gboolean   mm_port_qmi_is_open      (MMPortQmi            *self);
++QmiDevice *mm_port_qmi_peek_device (MMPortQmi *self);
+ void       mm_port_qmi_close        (MMPortQmi            *self,
+                                      GAsyncReadyCallback   callback,
+                                      gpointer              user_data);
+@@ -90,6 +91,9 @@ gboolean   mm_port_qmi_close_finish (MMPortQmi            *self,
+ 
+ void       mm_port_qmi_set_net_details (MMPortQmi *self,
+                                         MMPort    *first_net);
++void         mm_port_qmi_set_net_driver  (MMPortQmi   *self,
++                                          const gchar *net_driver);
++const gchar *mm_port_qmi_get_net_driver  (MMPortQmi   *self);
+ 
+ typedef enum {
+     MM_PORT_QMI_FLAG_DEFAULT  = 0,
+-- 
+2.34.1
+

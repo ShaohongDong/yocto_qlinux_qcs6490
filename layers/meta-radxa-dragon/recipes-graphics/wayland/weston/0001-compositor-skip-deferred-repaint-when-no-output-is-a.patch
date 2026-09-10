@@ -1,0 +1,63 @@
+From 08dac965dd5c6962719828117ae8075065c0fa7f Mon Sep 17 00:00:00 2001
+From: Yash Gupta <yash.gupta@oss.qualcomm.com>
+Date: Fri, 5 Jun 2026 20:15:57 +0530
+Subject: [PATCH] compositor: skip deferred repaint when no output is actively
+ painting
+
+When weston_backend_set_deferred() is called, subsequent calls to
+weston_output_schedule_repaint() unconditionally set the output to
+REPAINT_DEFERRED.  This is correct when another output on the same
+backend is mid-repaint and the deferred state is meaningful.
+
+However, when a newly-enabled output calls schedule_repaint() while
+deferred=true but no other output is in an active repaint cycle
+(BEGIN_FROM_IDLE, SCHEDULED, or AWAITING_COMPLETION), setting
+REPAINT_DEFERRED is incorrect: the output will wait for a
+clear_deferred() that may never come, or may come too late after the
+output's repaint window has passed.
+
+Before setting REPAINT_DEFERRED, check whether any output on the same
+backend is actively painting.  If none are, skip the deferred path and
+proceed directly to REPAINT_BEGIN_FROM_IDLE so the output enters the
+repaint loop immediately.
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/wayland/weston/-/merge_requests/2095]
+Signed-off-by: Yash Gupta <yash.gupta@oss.qualcomm.com>
+---
+ libweston/compositor.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/libweston/compositor.c b/libweston/compositor.c
+index 313db3dc..9852def4 100644
+--- a/libweston/compositor.c
++++ b/libweston/compositor.c
+@@ -4879,8 +4879,24 @@ weston_output_schedule_repaint(struct weston_output *output)
+ 		return;
+ 
+ 	if (output->backend->deferred) {
+-		output->repaint_status = REPAINT_DEFERRED;
+-		return;
++		bool any_active = false;
++		struct weston_output *out;
++
++		wl_list_for_each(out, &compositor->output_list, link) {
++			if (out->backend != output->backend)
++				continue;
++			if (out->repaint_status == REPAINT_BEGIN_FROM_IDLE ||
++			    out->repaint_status == REPAINT_SCHEDULED ||
++			    out->repaint_status == REPAINT_AWAITING_COMPLETION) {
++				any_active = true;
++				break;
++			}
++		}
++
++		if (any_active) {
++			output->repaint_status = REPAINT_DEFERRED;
++			return;
++		}
+ 	}
+ 
+ 	output->repaint_status = REPAINT_BEGIN_FROM_IDLE;
+-- 
+2.34.1
+

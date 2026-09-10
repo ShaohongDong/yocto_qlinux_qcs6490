@@ -1,0 +1,46 @@
+From 6fe58b58a302696625082bba48b3cbb70684c551 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Mon, 23 Jun 2025 09:47:24 -0500
+Subject: [PATCH 05/10] remove dead code
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ src/mm-broadband-modem-qmi.c | 21 ---------------------
+ 1 file changed, 21 deletions(-)
+
+diff --git a/src/mm-broadband-modem-qmi.c b/src/mm-broadband-modem-qmi.c
+index 6c871458..76761c20 100644
+--- a/src/mm-broadband-modem-qmi.c
++++ b/src/mm-broadband-modem-qmi.c
+@@ -8162,28 +8162,7 @@ wms_list_messages_ready (QmiClientWms *client,
+     ctx->i = 0;
+     read_next_sms_part (task);
+ }
+-#if 0
+-static MMSmsPart *
+-mm_create_sms_part_from_pdu (guint        index,
+-                             const gchar  *hexpdu,
+-                             MMSmsState   state,
+-                             gpointer     log_object,
+-                             GError       **error)
+-{
+-    g_autofree guint8 *pdu = NULL;
+-    gsize              pdu_len;
+-
+-    /* Convert PDU from hex to binary */
+-    pdu = mm_utils_hexstr2bin (hexpdu, -1, &pdu_len, error);
+-    if (!pdu) {
+-        g_prefix_error (error, "Couldn't convert 3GPP PDU from hex to binary: ");
+-        return NULL;
+-    }
+ 
+-    return mm_sms_part_3gpp_new_from_binary_pdu (index, pdu, pdu_len, log_object,
+-                                                    state == MM_SMS_STATE_RECEIVED, error);
+-}
+-#endif
+ static void
+ load_messages_from_ta_storage (GTask *task)
+ {
+-- 
+2.34.1
+

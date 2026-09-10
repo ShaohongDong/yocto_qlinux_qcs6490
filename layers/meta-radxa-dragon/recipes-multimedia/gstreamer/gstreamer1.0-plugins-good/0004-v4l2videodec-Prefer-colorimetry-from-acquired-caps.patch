@@ -1,0 +1,58 @@
+From 89f8cfc6e594e4620f2b38b1914fb37a618020ca Mon Sep 17 00:00:00 2001
+From: Pratik Pachange <ppachang@qti.qualcomm.com>
+Date: Tue, 25 Nov 2025 20:47:41 +0530
+Subject: [PATCH 04/11] v4l2videodec: Prefer colorimetry from acquired caps
+
+By default, the caps fixation is taking the first value from the
+supported colorimetries. This is not being accepted by video driver.
+Due to which set_format is failing.
+So, prefer colorimetry from acquired caps from the driver for fixate.
+
+Upstream-Status: Denied [https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/10193 ]
+
+Signed-off-by: Raja Ganapathi Busam <rbusam@qti.qualcomm.com>
+---
+ sys/v4l2/gstv4l2videodec.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/sys/v4l2/gstv4l2videodec.c b/sys/v4l2/gstv4l2videodec.c
+index d74f3e7..9a28e81 100644
+--- a/sys/v4l2/gstv4l2videodec.c
++++ b/sys/v4l2/gstv4l2videodec.c
+@@ -415,6 +415,7 @@ gst_v4l2_video_dec_negotiate (GstVideoDecoder * decoder)
+   GstVideoCodecState *output_state;
+   GstCaps *acquired_caps, *acquired_drm_caps;
+   GstCaps *fixation_caps, *available_caps, *caps, *filter;
++  GstStructure *st;
+   gboolean active;
+   GstBufferPool *cpool;
+   gboolean ret;
+@@ -508,6 +509,26 @@ gst_v4l2_video_dec_negotiate (GstVideoDecoder * decoder)
+   if (gst_caps_is_subset (acquired_caps, caps))
+     goto use_acquired_caps;
+ 
++  /* Prefer colorimetry from acquired caps for fixate */
++  {
++    const gchar *output_cl, *capture_cl;
++
++    output_cl =
++        gst_structure_get_string (gst_caps_get_structure (self->
++            input_state->caps, 0), "colorimetry");
++    capture_cl =
++        gst_structure_get_string (gst_caps_get_structure (acquired_caps, 0),
++        "colorimetry");
++
++    if (output_cl && g_strcmp0 (output_cl, capture_cl))
++      GST_WARNING_OBJECT (self,
++          "Output colorimetry %s and capture colorimetry %s are different",
++          output_cl, capture_cl);
++
++    st = gst_caps_get_structure (caps, 0);
++    gst_structure_fixate_field_string (st, "colorimetry", capture_cl);
++  }
++
+   /* Fixate pixel format */
+   caps = gst_caps_fixate (caps);
+ 
+-- 
+2.34.1

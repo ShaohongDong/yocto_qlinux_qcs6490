@@ -1,0 +1,88 @@
+name: Tests
+
+on:
+  workflow_call:
+    inputs:
+      build_id:
+        required: true
+        type: string
+    outputs:
+      summary_ids:
+        description: "IDs of the test summary artifact"
+        value: ${{ jobs.collect-ids.outputs.summary_ids }}
+env:
+  # git sha, tag or branch in lava-test-plans repository
+  LAVA_TEST_PLANS_REF: "d02dbbca3e35c3f29dce5aa4c1eac506103f821d"
+  # CalVer tag in qcom-linux-testkit repository (format: testkit-YYYY.MM.DD)
+  TESTKIT_REF: "testkit-2026.06.10"
+
+jobs:
+  prepare-env:
+    name: Prepare environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Print ref"
+        shell: bash
+        run: |
+          echo "lava-test-plans ref: ${{ env.LAVA_TEST_PLANS_REF }}"
+    outputs:
+      lava-test-plans-ref: "${{ env.LAVA_TEST_PLANS_REF }}"
+      testkit-ref: "${{ env.TESTKIT_REF }}"
+  test-nodistro:
+    needs: [prepare-env]
+    name: "Test nodistro"
+    uses: ./.github/workflows/test-distro.yml
+    secrets: inherit
+    with:
+      build_id: "${{ inputs.build_id }}"
+      devices: "iq-8275-evk,iq-9075-evk,qcm6490-idp,qcs615-ride,rb3gen2-core-kit,qcs8300-ride-sx,qcs9100-ride-sx,dragonboard-410c,dragonboard-820c,rb1-core-kit"
+      project_name: "meta-qcom"
+      distro_name: "nodistro"
+      lava_test_plans_ref: "${{ needs.prepare-env.outputs.lava-test-plans-ref }}"
+      testkit_ref: "${{ needs.prepare-env.outputs.testkit-ref }}"
+  test-qcom-distro_linux-qcom-next:
+    needs: [prepare-env]
+    name: "Test qcom-distro_linux-qcom-next"
+    uses: ./.github/workflows/test-distro.yml
+    secrets: inherit
+    with:
+      build_id: "${{ inputs.build_id }}"
+      devices: "glymur-crd,iq-8275-evk,iq-9075-evk,iq-x7181-evk,kaanapali-mtp,qcm6490-idp,qcs615-ride,rb3gen2-core-kit,qcs8300-ride-sx,qcs9100-ride-sx,rb1-core-kit"
+      devices_premerge: "glymur-crd,iq-8275-evk,iq-9075-evk,kaanapali-mtp,qcm6490-idp,qcs615-ride,rb3gen2-core-kit,qcs8300-ride-sx,qcs9100-ride-sx,rb1-core-kit"
+      project_name: "meta-qcom"
+      distro_name: "qcom-distro"
+      distro_suffix: "_linux-qcom-next"
+      lava_test_plans_ref: "${{ needs.prepare-env.outputs.lava-test-plans-ref }}"
+      testkit_ref: "${{ needs.prepare-env.outputs.testkit-ref }}"
+  test-qcom-distro:
+    needs: [prepare-env]
+    name: "Test qcom-distro"
+    uses: ./.github/workflows/test-distro.yml
+    secrets: inherit
+    with:
+      build_id: "${{ inputs.build_id }}"
+      devices: "iq-8275-evk,iq-9075-evk,iq-x7181-evk,qcm6490-idp,qcs615-ride,rb3gen2-core-kit,qcs8300-ride-sx,qcs9100-ride-sx,rb1-core-kit"
+      devices_premerge: "iq-8275-evk,iq-9075-evk,qcm6490-idp,qcs615-ride,rb3gen2-core-kit,qcs8300-ride-sx,qcs9100-ride-sx,rb1-core-kit"
+      project_name: "meta-qcom"
+      distro_name: "qcom-distro"
+      lava_test_plans_ref: "${{ needs.prepare-env.outputs.lava-test-plans-ref }}"
+      testkit_ref: "${{ needs.prepare-env.outputs.testkit-ref }}"
+
+  collect-ids:
+    name: "Collect Summary artifact IDs"
+    needs: [test-nodistro, test-qcom-distro, test-qcom-distro_linux-qcom-next]
+    if: |
+      always()
+      && contains(needs.*.result, 'success')
+      && !contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      pull-requests: write
+    outputs:
+      summary_ids: ${{ steps.generate-summary.outputs.artifact_ids }}
+    steps:
+      - name: Summary IDs
+        id: generate-summary
+        run: |
+          echo "artifact_ids=${{ needs.test-nodistro.outputs.summary_id }},${{ needs.test-qcom-distro.outputs.summary_id }},${{ needs.test-qcom-distro_linux-qcom-next.outputs.summary_id }}" >> $GITHUB_OUTPUT

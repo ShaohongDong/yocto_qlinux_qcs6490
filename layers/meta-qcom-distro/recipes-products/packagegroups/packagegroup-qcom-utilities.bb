@@ -1,0 +1,89 @@
+SUMMARY = "Userspace utilities for QCOM platforms"
+
+inherit packagegroup
+
+PACKAGES += " \
+    ${PN}-bluetooth-utils \
+    ${PN}-debug-utils \
+    ${PN}-filesystem-utils \
+    ${PN}-gpu-utils \
+    ${PN}-network-utils \
+    ${PN}-profile-utils \
+    ${PN}-support-utils \
+    "
+
+# Have ${PN} drag in all of the subpackages
+RDEPENDS:${PN} = " \
+    ${PN}-bluetooth-utils \
+    ${PN}-debug-utils \
+    ${PN}-filesystem-utils \
+    ${PN}-gpu-utils \
+    ${PN}-network-utils \
+    ${PN}-support-utils \
+    "
+
+RDEPENDS:${PN}-bluetooth-utils = " \
+    bluez5-obex \
+    bluez5-noinst-tools \
+    "
+
+RDEPENDS:${PN}-debug-utils = " \
+    gdb \
+    strace \
+    valgrind \
+    "
+
+RDEPENDS:${PN}-filesystem-utils = " \
+    e2fsprogs \
+    e2fsprogs-e2fsck \
+    e2fsprogs-mke2fs \
+    e2fsprogs-resize2fs \
+    e2fsprogs-tune2fs \
+    "
+
+RDEPENDS:${PN}-gpu-utils = " \
+    clinfo \
+    kmscube \
+    mesa-demos \
+    vulkan-tools \
+"
+RRECOMMENDS:${PN}-gpu-utils = " \
+    libopencl-mesa \
+"
+
+RDEPENDS:${PN}-network-utils = " \
+    ethtool \
+    hostapd \
+    iperf2 \
+    iproute2 \
+    iw \
+    networkmanager \
+    openssh-scp \
+    openssh-ssh \
+    paho-mqtt-c \
+    rsync \
+    smbclient \
+    tcpdump \
+    wowlan-udev \
+    "
+
+RDEPENDS:${PN}-profile-utils = " \
+    perf \
+    powertop \
+    stress-ng \
+    sysbench \
+    ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'systemd-analyze', '', d)} \
+    tiobench \
+    "
+
+RDEPENDS:${PN}-support-utils = " \
+    dtc \
+    efivar \
+    file \
+    less \
+    ltrace \
+    procps \
+    tinyalsa \
+    trace-cmd \
+    usbutils \
+    "

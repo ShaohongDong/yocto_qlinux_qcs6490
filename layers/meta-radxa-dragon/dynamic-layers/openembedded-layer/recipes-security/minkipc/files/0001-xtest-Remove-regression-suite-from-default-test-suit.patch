@@ -1,0 +1,44 @@
+From a147d820c115f0c5b0b72a9d3fc622118fbe0f83 Mon Sep 17 00:00:00 2001
+From: Harshal Dev <harshal.dev@oss.qualcomm.com>
+Date: Fri, 3 Apr 2026 14:24:28 +0530
+Subject: [PATCH] xtest: Remove regression suite from default test suite list
+
+Remove the regression suite from default test-suite list since it is not
+applicable for QTEE.
+
+Upstream-Status: Inappropriate [tests applicable for optee]
+
+Signed-off-by: Harshal Dev <harshal.dev@oss.qualcomm.com>
+---
+ host/xtest/xtest_main.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/host/xtest/xtest_main.c b/host/xtest/xtest_main.c
+index 5e907e2..476f89e 100644
+--- a/host/xtest/xtest_main.c
++++ b/host/xtest/xtest_main.c
+@@ -47,6 +47,12 @@ char *xtest_tee_name = NULL;
+ unsigned int level = 0;
+ static const char glevel[] = "0";
+
++#ifdef WITH_REGRESSION_TESTS
++#define REGRESSION_SUITE "regression"
++#else
++#define REGRESSION_SUITE ""
++#endif
++
+ #ifdef WITH_GP_TESTS
+ #define GP_SUITE	"+gp"
+ #else
+@@ -65,7 +71,7 @@ static const char glevel[] = "0";
+ #define FFA_SPMC_SUITE	""
+ #endif
+
+-static char gsuitename[] = "regression" GP_SUITE PKCS11_SUITE FFA_SPMC_SUITE;
++static char gsuitename[] = REGRESSION_SUITE GP_SUITE PKCS11_SUITE FFA_SPMC_SUITE;
+
+ void usage(char *program);
+
+--
+2.34.1
+

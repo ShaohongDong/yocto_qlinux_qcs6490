@@ -1,0 +1,133 @@
+From bc75ba659e241dc2b0a56250788806626d92e7c3 Mon Sep 17 00:00:00 2001
+From: Mahesh Angadi <mangadi@qti.qualcomm.com>
+Date: Mon, 20 Apr 2026 10:43:58 +0530
+Subject: [PATCH 2/2] libweston: inline color pipeline and wireframe helpers in
+ fragment shader
+
+Remove small helper functions used only by the fragment shader main()
+path and inline their logic directly at the call sites.
+
+This keeps all color pipeline, color effect, and wireframe handling
+self-contained in main(), reducing indirection and simplifying shader
+control flow without changing rendering behavior.
+
+This change is part of a temporary workaround for shader compilation
+issues observed on Adreno when using fragment shader helper patterns
+alongside external texture sampling.
+
+The Adreno compiler will implement complete functionality to correctly
+handle external sampler uniforms (samplerExternalOES) and related shader
+patterns. Once that support is available in the target driver releases,
+this workaround should be dropped in favor of the upstream shader
+design.
+
+Upstream-Status: Inappropriate [Temporary work around]
+Signed-off-by: Mahesh Angadi <mangadi@qti.qualcomm.com>
+
+diff --git a/libweston/renderer-gl/fragment.glsl b/libweston/renderer-gl/fragment.glsl
+index b75e59a8..ae4d56ed 100644
+--- a/libweston/renderer-gl/fragment.glsl
++++ b/libweston/renderer-gl/fragment.glsl
+@@ -439,53 +439,6 @@ color_mapping(vec3 color)
+ 		return vec3(1.0, 0.3, 1.0);
+ }
+ 
+-vec4
+-color_pipeline(vec4 color)
+-{
+-	color.rgb = color_curve(c_color_pre_curve, color_pre_curve_lut,
+-				color_pre_curve_par, color.rgb);
+-	color.rgb = color_mapping(color.rgb);
+-	color.rgb = color_curve(c_color_post_curve, color_post_curve_lut,
+-				color_post_curve_par, color.rgb);
+-
+-	return color;
+-}
+-
+-vec4
+-color_inversion(vec4 color)
+-{
+-	color.rgb = 1.0 - color.rgb;
+-
+-	return color;
+-}
+-
+-vec4
+-color_cvd_correction(vec4 color)
+-{
+-	vec3 original;
+-
+-	/**
+-	 * See weston_output_color_effect_cvd_correction() for more details.
+-	 */
+-
+-	original = color.rgb;
+-
+-	color.rgb = cvd_correction_matrix * original;
+-	color.rgb = clamp(color.rgb, 0.0, 1.0);
+-
+-	return color;
+-}
+-
+-vec4
+-wireframe()
+-{
+-	float edge1 = texture2D(tex_wireframe, vec2(v_barycentric.x, 0.5)).r;
+-	float edge2 = texture2D(tex_wireframe, vec2(v_barycentric.y, 0.5)).r;
+-	float edge3 = texture2D(tex_wireframe, vec2(v_barycentric.z, 0.5)).r;
+-
+-	return vec4(clamp(edge1 + edge2 + edge3, 0.0, 1.0));
+-}
+-
+ void
+ main()
+ {
+@@ -503,12 +456,26 @@ main()
+ 	}
+ 
+ 	/* For now color management and color effects do not coexist */
+-	if (c_need_color_pipeline)
+-		color = color_pipeline(color);
+-	else if (c_color_effect == SHADER_COLOR_EFFECT_INVERSION)
+-		color = color_inversion(color);
+-	else if (c_color_effect == SHADER_COLOR_EFFECT_CVD_CORRECTION)
+-		color = color_cvd_correction(color);
++	if (c_need_color_pipeline) {
++
++		color.rgb = color_curve(c_color_pre_curve, color_pre_curve_lut,
++					color_pre_curve_par, color.rgb);
++		color.rgb = color_mapping(color.rgb);
++		color.rgb = color_curve(c_color_post_curve, color_post_curve_lut,
++					color_post_curve_par, color.rgb);
++	}
++	else if (c_color_effect == SHADER_COLOR_EFFECT_INVERSION) {
++		color.rgb = 1.0 - color.rgb;
++	}
++	else if (c_color_effect == SHADER_COLOR_EFFECT_CVD_CORRECTION) {
++		vec3 original;
++		/**
++		 * See weston_output_color_effect_cvd_correction() for more details.
++		 */
++		original = color.rgb;
++		color.rgb = cvd_correction_matrix * original;
++		color.rgb = clamp(color.rgb, 0.0, 1.0);
++	}
+ 
+ 	/* Ensure pre-multiplied for blending */
+ 	if (!c_input_is_premult || (c_input_is_premult && c_need_straight_alpha))
+@@ -520,7 +487,11 @@ main()
+ 		color = color * vec4(1.0 - tint.a) + tint;
+ 
+ 	if (c_wireframe) {
+-		vec4 src = wireframe();
++		vec4 src;
++		float edge1 = texture2D(tex_wireframe, vec2(v_barycentric.x, 0.5)).r;
++		float edge2 = texture2D(tex_wireframe, vec2(v_barycentric.y, 0.5)).r;
++		float edge3 = texture2D(tex_wireframe, vec2(v_barycentric.z, 0.5)).r;
++		src = vec4(clamp(edge1 + edge2 + edge3, 0.0, 1.0));
+ 		color = color * vec4(1.0 - src.a) + src;
+ 	}
+ 
+-- 
+2.34.1
+

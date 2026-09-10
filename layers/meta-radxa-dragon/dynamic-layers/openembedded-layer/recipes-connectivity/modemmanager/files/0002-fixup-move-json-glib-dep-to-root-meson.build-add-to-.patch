@@ -1,0 +1,27 @@
+From 3011b7aaf23fb526ee9264fbaed937fec3b38512 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Tue, 17 Jun 2025 08:32:24 -0500
+Subject: [PATCH 02/10] fixup: move json-glib dep to root meson.build; add to
+ libmmbase deps
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ meson.build | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/meson.build b/meson.build
+index 2a0b9734..eda009ce 100644
+--- a/meson.build
++++ b/meson.build
+@@ -296,6 +296,8 @@ if enable_gir
+   dependency('gobject-introspection-1.0', version: '>= 0.9.6')
+ endif
+ 
++json_glib_dep = dependency('json-glib-1.0', version: '>= 1.0')
++
+ # vala support
+ enable_vapi = get_option('vapi')
+ 
+-- 
+2.34.1
+

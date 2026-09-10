@@ -1,0 +1,129 @@
+From 59bbc75dd7e6cbbd86645b6a9fdbb354b2927403 Mon Sep 17 00:00:00 2001
+From: Harsh Sharma <hsharm@qti.qualcomm.com>
+Date: Wed, 27 May 2026 23:36:06 -0700
+Subject: [PATCH 2/4] base-modem: allow QMI modem creation without net port for
+ BAM-DMUX
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1452]
+Signed-off-by: Harsh Sharma <hsharm@qti.qualcomm.com>
+---
+ src/mm-base-modem.c | 68 +++++++++++++++++++++++++++++++++++++--------
+ src/mm-base-modem.h |  1 +
+ 2 files changed, 58 insertions(+), 11 deletions(-)
+
+diff --git a/src/mm-base-modem.c b/src/mm-base-modem.c
+index 224320f6..2e875686 100644
+--- a/src/mm-base-modem.c
++++ b/src/mm-base-modem.c
+@@ -1683,13 +1683,18 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+         secondary = backup_primary ? backup_primary : backup_secondary;
+ 
+ #if defined WITH_QMI
+-    /* On QMI-based modems, we need to have at least a net port */
++    /* On QMI-based modems, we need to have at least a net port.
++     * Exception: BAM-DMUX (bam-dmux driver) net port appears only after
++     * DPM open port is sent during modem init. Allow modem creation
++     * without it — wwan0 will appear after DPM is sent. */
+     if (qmi && !data_net) {
+-        g_set_error_literal (error,
+-                             MM_CORE_ERROR,
+-                             MM_CORE_ERROR_FAILED,
+-                             "Failed to find a net port in the QMI modem");
+-        return FALSE;
++        if (!mm_base_modem_get_bam_dmux_pending (self)) {
++            g_set_error_literal (error,
++                                 MM_CORE_ERROR,
++                                 MM_CORE_ERROR_FAILED,
++                                 "Failed to find a net port in the QMI modem");
++            return FALSE;
++        }
+     }
+ #endif
+ 
+@@ -1787,7 +1792,7 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+ 
+     /* Fail if we haven't added any single data port; this is probably a plugin
+      * misconfiguration */
+-    if (!self->priv->data) {
++    if (!self->priv->data && !mm_base_modem_get_bam_dmux_pending (self)) {
+         g_set_error_literal (error, MM_CORE_ERROR, MM_CORE_ERROR_FAILED,
+                              "Failed to find a data port in the modem");
+         return FALSE;
+@@ -1797,10 +1802,18 @@ mm_base_modem_organize_ports (MMBaseModem *self,
+     if (qmi) {
+         /* The first item in the data list must be a net port, because
+          * QMI modems only expect net ports */
+-        g_assert (MM_IS_PORT_NET (self->priv->data->data));
+-        /* let the MMPortQmi know which net driver is being used, taken
+-         * from the first item in the net port list */
+-        g_list_foreach (qmi, (GFunc)mm_port_qmi_set_net_details, (gpointer) MM_PORT (self->priv->data->data));
++        if (self->priv->data) {
++            g_assert (MM_IS_PORT_NET (self->priv->data->data));
++            /* let the MMPortQmi know which net driver is being used, taken
++             * from the first item in the net port list */
++            g_list_foreach (qmi, (GFunc)mm_port_qmi_set_net_details, (gpointer) MM_PORT (self->priv->data->data));
++        } else if (mm_base_modem_get_bam_dmux_pending (self)) {
++
++            /* Set the net driver to bam-dmux so the QMI port knows its endpoint
++             * type even before wwan0 appears after DPM open port. */
++            for (l = qmi; l; l = g_list_next (l))
++                mm_port_qmi_set_net_driver (MM_PORT_QMI (l->data), "bam-dmux");
++        }
+ 
+         g_list_foreach (qmi, (GFunc)g_object_ref, NULL);
+         self->priv->qmi = g_steal_pointer (&qmi);
+@@ -2161,6 +2174,39 @@ mm_base_modem_get_drivers (MMBaseModem *self)
+     return (const gchar **)self->priv->drivers;
+ }
+ 
++gboolean
++mm_base_modem_get_bam_dmux_pending (MMBaseModem *self)
++{
++    guint i;
++
++    g_return_val_if_fail (MM_IS_BASE_MODEM (self), FALSE);
++
++    /* For qcom-soc modems, two net driver types exist:
++     *   - IPA:      kernel creates the net port (rmnet0) at boot time, so a
++     *               data port is always present at probe/organize time.
++     *   - BAM-DMUX: the net port (wwan0) only appears after DPM open port is
++     *               sent during modem init, so no data port exists yet.
++     *
++     * Therefore: qcom-soc + no data port ⟹ BAM-DMUX pending.
++     * This heuristic is safe because IPA modems always have a data port at
++     * probe time. */
++    if (g_strcmp0 (self->priv->plugin, "qcom-soc") == 0 && !self->priv->data)
++        return TRUE;
++
++    /* Secondary check: if the bam-dmux driver is already present in the
++     * drivers list (e.g. after wwan0 has appeared and been grabbed), use
++     * that as confirmation. */
++    if (!self->priv->drivers)
++        return FALSE;
++
++    for (i = 0; self->priv->drivers[i]; i++) {
++        if (g_strcmp0 (self->priv->drivers[i], "bam-dmux") == 0)
++            return TRUE;
++    }
++
++    return FALSE;
++}
++
+ const gchar *
+ mm_base_modem_get_plugin (MMBaseModem *self)
+ {
+diff --git a/src/mm-base-modem.h b/src/mm-base-modem.h
+index e0aecbb7..2f6258f0 100644
+--- a/src/mm-base-modem.h
++++ b/src/mm-base-modem.h
+@@ -219,6 +219,7 @@ gboolean mm_base_modem_get_reprobe (MMBaseModem *self);
+ const gchar  *mm_base_modem_get_device  (MMBaseModem *self);
+ const gchar  *mm_base_modem_get_physdev (MMBaseModem *self);
+ const gchar **mm_base_modem_get_drivers (MMBaseModem *self);
++gboolean      mm_base_modem_get_bam_dmux_pending (MMBaseModem *self);
+ const gchar  *mm_base_modem_get_plugin  (MMBaseModem *self);
+ 
+ guint mm_base_modem_get_vendor_id           (MMBaseModem *self);
+-- 
+2.34.1
+

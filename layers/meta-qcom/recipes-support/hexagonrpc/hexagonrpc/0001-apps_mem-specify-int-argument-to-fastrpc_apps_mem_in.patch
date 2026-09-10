@@ -1,0 +1,38 @@
+From 2588a626e798256ab260cd8bc27413fe1023fd2b Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Mon, 12 May 2025 16:07:35 +0300
+Subject: [PATCH] apps_mem: specify int argument to fastrpc_apps_mem_init()
+
+Without this building fails with:
+
+../git/hexagonrpcd/rpcd.c: In function 'start_reverse_tunnel':
+../git/hexagonrpcd/rpcd.c:275:21: error: too many arguments to function 'fastrpc_apps_mem_init'; expected 0, have 1
+  275 |         ifaces[2] = fastrpc_apps_mem_init(fd);
+      |                     ^~~~~~~~~~~~~~~~~~~~~ ~~
+In file included from ../git/hexagonrpcd/rpcd.c:38:
+../git/hexagonrpcd/apps_mem.h:27:27: note: declared here
+   27 | struct fastrpc_interface *fastrpc_apps_mem_init();
+      |                           ^~~~~~~~~~~~~~~~~~~~~
+
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Upstream-Status: Submitted [https://github.com/linux-msm/hexagonrpc/pull/12]
+---
+ hexagonrpcd/apps_mem.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hexagonrpcd/apps_mem.h b/hexagonrpcd/apps_mem.h
+index 0e72f818ed7d..447e3933b670 100644
+--- a/hexagonrpcd/apps_mem.h
++++ b/hexagonrpcd/apps_mem.h
+@@ -24,7 +24,7 @@
+ 
+ #include "listener.h"
+ 
+-struct fastrpc_interface *fastrpc_apps_mem_init();
++struct fastrpc_interface *fastrpc_apps_mem_init(int);
+ void fastrpc_apps_mem_deinit(struct fastrpc_interface *iface);
+ 
+ #endif
+-- 
+2.47.2
+

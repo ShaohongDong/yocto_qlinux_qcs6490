@@ -1,0 +1,6 @@
+#!/bin/sh
+
+: "${FASTRPC_TEST_BIN:=/usr/bin/fastrpc_test}"
+
+# Execute the test
+exec "${FASTRPC_TEST_BIN}" -U 1

@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/siemens/kas/master/kas/schema-kas.json
+
+header:
+  version: 14
+  includes:
+  - kas/base.yml
+
+repos:
+  meta-raspberrypi:
+    url: https://github.com/agherzan/meta-raspberrypi
+
+  meta-updater-raspberrypi:
+    url: https://github.com/uptane/meta-updater-raspberrypi
+
+local_conf_header:
+  license: |
+    # Uncomment next line to allow the license
+    # See: linux-firmware-rpidistro in meta-raspberrypi/docs/ipcompliance.md
+    #LICENSE_FLAGS_ACCEPTED = "synaptics-killswitch"
+
+machine: unset

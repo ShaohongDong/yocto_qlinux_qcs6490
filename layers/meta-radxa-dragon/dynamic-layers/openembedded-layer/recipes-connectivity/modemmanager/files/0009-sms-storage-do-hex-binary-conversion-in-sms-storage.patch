@@ -1,0 +1,303 @@
+From 99e2aab4e330eef5cfe17c99feb5f0a31f43a6b3 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Wed, 25 Jun 2025 14:12:13 -0500
+Subject: [PATCH 09/10] sms-storage: do hex<->binary conversion in sms-storage
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+Signed-off-by: Dan Williams <dan@ioncontrol.co>
+---
+ src/mm-broadband-modem-qmi.c | 14 ++++--
+ src/mm-sms-qmi.c             | 35 ++++++--------
+ src/mm-sms-storage.c         | 91 ++++++++++++++++++------------------
+ src/mm-sms-storage.h         | 25 ++++------
+ 4 files changed, 80 insertions(+), 85 deletions(-)
+
+diff --git a/src/mm-broadband-modem-qmi.c b/src/mm-broadband-modem-qmi.c
+index 10b3d82d..f91c2092 100644
+--- a/src/mm-broadband-modem-qmi.c
++++ b/src/mm-broadband-modem-qmi.c
+@@ -8170,8 +8170,6 @@ load_messages_from_ta_storage (GTask *task)
+     MMBroadbandModemQmi        *self;
+     LoadInitialSmsPartsContext *ctx;
+     GList                      *indexes, *l;
+-    gchar                      *pdu;
+-    MMSmsState                  state;
+     g_autoptr(GError)           read_error = NULL;
+ 
+     self = g_task_get_source_object (task);
+@@ -8186,11 +8184,14 @@ load_messages_from_ta_storage (GTask *task)
+     }
+ 
+     for (l = indexes; l; l = g_list_next (l)) {
++        g_autofree guint8 *pdu;
++        gsize              pdu_len = 0;
++        MMSmsState         state = MM_SMS_STATE_UNKNOWN;
+         guint              msg_index = GPOINTER_TO_UINT (l->data);
+         MMSmsPart         *part;
+         g_autoptr(GError)  error = NULL;
+ 
+-        pdu = mm_sms_storage_read_message (msg_index, &state, &error);
++        pdu = mm_sms_storage_read_message (msg_index, &state, &pdu_len, &error);
+         if (!pdu) {
+             mm_obj_warn (self,
+                          "Failed to read the SMS (%d) from storage: %s",
+@@ -8199,7 +8200,12 @@ load_messages_from_ta_storage (GTask *task)
+             continue;
+         }
+ 
+-        part = mm_create_sms_part_from_pdu (msg_index, pdu, state, self, &error);
++        part = mm_sms_part_3gpp_new_from_binary_pdu (msg_index,
++                                                     pdu,
++                                                     pdu_len,
++                                                     self,
++                                                     state == MM_SMS_STATE_RECEIVED,
++                                                     &error);
+         if (!part) {
+             /* Don't treat the error as critical */
+             mm_obj_dbg (self, "error parsing SMS (%d) PDU: %s", msg_index, error->message);
+diff --git a/src/mm-sms-qmi.c b/src/mm-sms-qmi.c
+index bae2f4ca..81120e8b 100644
+--- a/src/mm-sms-qmi.c
++++ b/src/mm-sms-qmi.c
+@@ -246,33 +246,28 @@ sms_store_next_part (GTask *task)
+     }
+ 
+     /* Save the message in local data base */
+-    if(ctx->storage == MM_SMS_STORAGE_TA) {
+-        guint32 idx;
+-        gchar *sms_pdu;
+-        GError *err = NULL;
+-        MMSmsState state;
++    if (ctx->storage == MM_SMS_STORAGE_TA) {
++        guint32     idx;
++        MMSmsState  state;
++        GList      *parts;
+ 
+         mm_obj_dbg (self, "sms_store_next_part, storing in TA");
+         state = mm_gdbus_sms_get_state (MM_GDBUS_SMS (self));
+-        sms_pdu = mm_create_sms_pdu(pdu, pdulen);
+ 
+-        if (!mm_sms_storage_store_message(sms_pdu, state, &idx, &err)) {
+-            g_task_return_error (task, err);
++        if (!mm_sms_storage_store_message (pdu, pdulen, state, &idx, &error)) {
++            g_task_return_error (task, error);
+             g_object_unref (task);
+-            g_free (sms_pdu);
+-            return;
+-        } else {
+-            GList *parts;
+-            /* Set the index in the part we hold */
+-            parts = mm_base_sms_get_parts (self);
+-            mm_sms_part_set_index ((MMSmsPart *)parts->data, (guint)idx);
+-
+-            /* Go on with next one */
+-            ctx->current = g_list_next (ctx->current);
+-            g_free (sms_pdu);
+-            sms_store_next_part (task);
+             return;
+         }
++
++        /* Set the index in the part we hold */
++        parts = mm_base_sms_get_parts (self);
++        mm_sms_part_set_index ((MMSmsPart *)parts->data, (guint)idx);
++
++        /* Go on with next one */
++        ctx->current = g_list_next (ctx->current);
++        sms_store_next_part (task);
++        return;
+     }
+ 
+     /* Convert to GArray */
+diff --git a/src/mm-sms-storage.c b/src/mm-sms-storage.c
+index 867f43af..bdd9361d 100644
+--- a/src/mm-sms-storage.c
++++ b/src/mm-sms-storage.c
+@@ -32,21 +32,23 @@ static const gchar *dbname = PKGSYSCONFDIR "/smsdb.json";
+ 
+ /** Store message in local storage in "pdu,state" format*/
+ gboolean
+-mm_sms_storage_store_message (gchar       *pdu,
+-                              MMSmsState   state,
+-                              guint32     *idx,
+-                              GError     **error)
++mm_sms_storage_store_message (const guint8  *pdu,
++                              gsize          pdu_len,
++                              MMSmsState     state,
++                              guint32       *idx,
++                              GError       **error)
+ {
+-    g_autoptr(JsonParser) parser = NULL;
+-    GError *inner_error = NULL;
+-    guint msg_ref = 0;
+-    g_autofree gchar *msg_ref_str = NULL;
+-    g_autoptr(JsonNode) root = NULL;
+-    JsonObject *root_object;
+-    JsonObject *object = NULL;
+-    g_autoptr(JsonReader) reader = NULL;
++    g_autoptr(JsonParser)    parser = NULL;
++    GError                  *inner_error = NULL;
++    guint                    msg_ref = 0;
++    g_autofree gchar        *msg_ref_str = NULL;
++    g_autofree gchar        *hexpdu = NULL;
++    g_autoptr(JsonNode)      root = NULL;
++    JsonObject              *root_object;
++    JsonObject              *object = NULL;
++    g_autoptr(JsonReader)    reader = NULL;
+     g_autoptr(JsonGenerator) generator = NULL;
+-    gboolean no_data = TRUE;
++    gboolean                 no_data = TRUE;
+ 
+     parser = json_parser_new ();
+ 
+@@ -76,11 +78,16 @@ mm_sms_storage_store_message (gchar       *pdu,
+ 
+     msg_ref++;
+     json_object_set_int_member (root_object, "msg_ref", msg_ref);
++
+     object = json_object_new ();
+-    json_object_set_string_member (object, "pdu", pdu);
+     json_object_set_int_member (object, "state", state);
++
++    hexpdu = mm_utils_bin2hexstr (pdu, pdu_len);
++    json_object_set_string_member (object, "pdu", hexpdu);
++
+     msg_ref_str = g_strdup_printf ("%u", msg_ref);
+     json_object_set_object_member (root_object, msg_ref_str, object);
++
+     json_node_take_object (root, root_object);
+ 
+     generator = json_generator_new ();
+@@ -146,10 +153,11 @@ mm_sms_storage_delete_message (guint    index,
+     return TRUE;
+ }
+ 
+-/* Read a message of given index from stoarge and return its PDU */
+-gchar *
++/* Read a message of given index from stoarge and return its binary PDU */
++guint8 *
+ mm_sms_storage_read_message (guint        index,
+                              MMSmsState  *state,
++                             gsize       *out_pdu_len,
+                              GError     **error)
+ {
+     g_autoptr(JsonParser)  parser = NULL;
+@@ -160,6 +168,10 @@ mm_sms_storage_read_message (guint        index,
+     JsonNode              *node = NULL;
+     g_autofree gchar      *msg_ref_str = NULL;
+     JsonObject            *obj;
++    guint8                *pdu;
++    const gchar           *hexpdu;
++
++    g_assert (out_pdu_len != NULL);
+ 
+     parser = json_parser_new ();
+ 
+@@ -192,10 +204,27 @@ mm_sms_storage_read_message (guint        index,
+     }
+ 
+     obj = json_node_get_object (node);
++    hexpdu = json_object_get_string_member (obj, "pdu");
++    if (!hexpdu) {
++        g_set_error (error,
++                     MM_CORE_ERROR,
++                     MM_CORE_ERROR_NOT_FOUND,
++                     "Message index %d had no PDU in storage",
++                     index);
++        return FALSE;
++    }
++
++    /* Convert PDU from hex to binary */
++    pdu = mm_utils_hexstr2bin (hexpdu, -1, out_pdu_len, error);
++    if (!pdu) {
++        g_prefix_error (error, "Couldn't convert 3GPP PDU from hex to binary: ");
++        return NULL;
++    }
++
+     if (state)
+         *state = json_object_get_int_member (obj, "state");
+ 
+-    return g_strdup (json_object_get_string_member (obj, "pdu"));
++    return pdu;
+ }
+ 
+ /* Return all valid indexces */
+@@ -321,31 +350,3 @@ mm_sms_get_default_storage_type (GError  **error)
+ 
+     return storage;
+ }
+-
+-MMSmsPart *
+-mm_create_sms_part_from_pdu (guint       index,
+-                             const gchar *hexpdu,
+-                             MMSmsState  state,
+-                             gpointer    log_object,
+-                             GError      **error)
+-{
+-    g_autofree guint8 *pdu = NULL;
+-    gsize              pdu_len;
+-
+-    /* Convert PDU from hex to binary */
+-    pdu = mm_utils_hexstr2bin (hexpdu, -1, &pdu_len, error);
+-    if (!pdu) {
+-        g_prefix_error (error, "Couldn't convert 3GPP PDU from hex to binary: ");
+-        return NULL;
+-    }
+-
+-    return mm_sms_part_3gpp_new_from_binary_pdu (index, pdu, pdu_len, log_object,
+-                                                    state == MM_SMS_STATE_RECEIVED, error);
+-}
+-
+-gchar *
+-mm_create_sms_pdu (const guint8 *pdu,
+-                   gsize         pdulen)
+-{
+-    return mm_utils_bin2hexstr (pdu, pdulen);
+-}
+diff --git a/src/mm-sms-storage.h b/src/mm-sms-storage.h
+index 5a452885..d2bb22d4 100644
+--- a/src/mm-sms-storage.h
++++ b/src/mm-sms-storage.h
+@@ -20,17 +20,19 @@
+ #include <glib.h>
+ #include <ModemManager.h>
+ 
+-gboolean     mm_sms_storage_store_message       (gchar       *pdu,
+-                                                 MMSmsState   state,
+-                                                 guint32     *idx,
+-                                                 GError     **error);
++gboolean     mm_sms_storage_store_message       (const guint8  *pdu,
++                                                 gsize          pdu_len,
++                                                 MMSmsState     state,
++                                                 guint32       *idx,
++                                                 GError       **error);
+ 
+ gboolean     mm_sms_storage_delete_message      (guint    index,
+                                                  GError **error);
+ 
+-gchar *      mm_sms_storage_read_message        (guint        index,
+-                                                 MMSmsState  *state,
+-                                                 GError     **error);
++guint8 *      mm_sms_storage_read_message        (guint        index,
++                                                  MMSmsState  *state,
++                                                  gsize       *out_pdu_len,
++                                                  GError     **error);
+ 
+ GList *      mm_sms_storage_read_all_indexes    (GError **error);
+ 
+@@ -39,13 +41,4 @@ gboolean     mm_sms_update_default_storage_type (MMSmsStorage   storage,
+ 
+ MMSmsStorage mm_sms_get_default_storage_type    (GError **error);
+ 
+-MMSmsPart *  mm_create_sms_part_from_pdu        (guint         index,
+-                                                 const gchar  *hexpdu,
+-                                                 MMSmsState    state,
+-                                                 gpointer      log_object,
+-                                                 GError      **error);
+-
+-gchar *      mm_create_sms_pdu                  (const guint8 *pdu,
+-                                                 gsize         pdulen);
+-
+ #endif /* MM_SMS_STORAGE_H */
+-- 
+2.34.1
+

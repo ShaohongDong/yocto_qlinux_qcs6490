@@ -1,0 +1,178 @@
+name: Run lava-test-plans
+inputs:
+  machines:
+    description: "Comma separated list of machines"
+    required: true
+  distro_name:
+    description: "Name of the distro including kernel suffix"
+    required: true
+  build_id:
+    description: "ID of the workflow from which build URL will be downloaded"
+    required: true
+  gh_token:
+    description: "Github token. It's required to download artifacts from the workflow"
+    required: true
+  prefix:
+    description: "Prefix for the compressed file that is uploaded as workflow artifact"
+    default: testjobs
+  testplan:
+    description: "Full path of the test plan to use in job generation"
+    default: boot
+  project:
+    description: "Project name to be used in lava-test-plans call"
+    required: false
+  ref:
+    description: "Ref in the lava-test-plans repository. Can be a commit ID, branch or tag"
+    required: true
+  testkit_ref:
+    description: "Ref in qcom-linux-testkit repository. Can be a CalVer tag (testkit-YYYY.MM.DD) or commit SHA"
+    required: false
+    default: ""
+
+outputs:
+  jobmatrix:
+    description: Job matrix composed from generated LAVA test job files
+    value: ${{ steps.lava-test-plans.outputs.jobmatrix }}
+  artifact_id:
+    description: "ID of the uploaded artifact containing rendered test jobs"
+    value: ${{ steps.upload-test-plans.outputs.artifact-id }}
+
+runs:
+  using: "composite"
+  steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: qualcomm-linux/lava-test-plans
+          path: lava-test-plans
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.11
+
+      - name: 'Download build URLs'
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ inputs.gh_token }}
+          run-id: ${{ inputs.build_id }}
+          pattern: build-url_*_${{ inputs.distro_name }}
+
+      - name: Run lava-test-plans
+        id: lava-test-plans
+        shell: bash
+        env:
+          INPUTS_PROJECT: ${{ inputs.project }}
+          INPUTS_DISTRO_NAME: ${{ inputs.distro_name }}
+          INPUTS_MACHINES: ${{ inputs.machines }}
+          INPUTS_KERNEL: ${{ inputs.kernel }}
+          INPUTS_TESTPLAN: ${{ inputs.testplan }}
+          INPUTS_PREFIX: ${{ inputs.prefix }}
+          INPUTS_TESTKIT_REF: ${{ inputs.testkit_ref }}
+        run: |
+          set -euo pipefail
+          cd lava-test-plans && pip install .
+          lava-test-plans --version
+          OUT_PATH="${GITHUB_WORKSPACE}/out"
+          VARS_OUT_PATH="${OUT_PATH}/vars"
+          JOBS_OUT_PATH="${OUT_PATH}/jobs"
+          PROJECT="${GITHUB_REPOSITORY#*/}"
+          if [ -n "${INPUTS_PROJECT}" ]; then
+            echo "jobmatrix=''" >> $GITHUB_OUTPUT
+            PROJECT="${INPUTS_PROJECT}"
+          fi
+          echo "JOBS_OUT_PATH=${JOBS_OUT_PATH}" >> $GITHUB_ENV
+          mkdir -p "${VARS_OUT_PATH}"
+          mkdir -p "${JOBS_OUT_PATH}"
+          echo "PROJECT_NAME=${PROJECT}" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "PROJECT=projects/${PROJECT}/" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "LAVA_JOB_PRIORITY=50" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          # OS_INFO can be omited
+          echo "OS_INFO=qcom-distro" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "AUDIO_CLIPS_BASE_DIR=/home/AudioClips/" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "BUILD_NUMBER=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "DOCKER_IMAGE_POSTPROCESS=ghcr.io/foundriesio/lava-lmp-sign:main" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "AUTH_HEADER_NAME=Authorization" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "AUTH_HEADER_TOKEN=Q_S3_TOKEN" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          echo "TEST_DEFINITIONS_REPOSITORY=https://github.com/qualcomm-linux/qcom-linux-testkit/" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          if [ -n "${INPUTS_TESTKIT_REF}" ]; then
+            echo "TEST_DEFINITIONS_REVISION=${INPUTS_TESTKIT_REF}" >> "${VARS_OUT_PATH}/gh-variables.ini"
+          fi
+          IMAGE_TYPE="core-image-base"
+          case "${INPUTS_DISTRO_NAME}" in
+            "qcom-distro"*)
+              IMAGE_TYPE="qcom-multimedia-image"
+              echo "AUTO_LOGIN_PASSWORD_PROMPT=Password" >> "${VARS_OUT_PATH}/gh-variables.ini"
+              echo "AUTO_LOGIN_PASSWORD=oelinux123" >> "${VARS_OUT_PATH}/gh-variables.ini"
+              ;;
+          esac
+
+          RESULT_JSON='{"target": []}'
+          for machine in ${INPUTS_MACHINES//,/ }; do
+            echo "Rendering test job templates for ${machine}"
+            cp "${VARS_OUT_PATH}/gh-variables.ini" "${VARS_OUT_PATH}/${machine}.ini"
+            echo "IMAGE_FILE_NAME=${IMAGE_TYPE}-${machine}.rootfs.qcomflash.tar.gz" >> "${VARS_OUT_PATH}/${machine}.ini"
+            echo "DEVICE_TYPE=${machine}" >> "${VARS_OUT_PATH}/${machine}.ini"
+            export BUILD_URL=""
+            # dir name and file name are the same as we're downloading multiple files
+            export BUILD_URL_FILE="$GITHUB_WORKSPACE/build-url_${machine}_${INPUTS_DISTRO_NAME}/build-url_${machine}_${INPUTS_DISTRO_NAME}"
+            if [ "${machine}" = "dragonboard-410c" ]; then
+              export BUILD_URL_FILE="$GITHUB_WORKSPACE/build-url_qcom-armv8a_${INPUTS_DISTRO_NAME}/build-url_qcom-armv8a_${INPUTS_DISTRO_NAME}"
+            fi
+            if [ "${machine}" = "dragonboard-820c" ]; then
+              export BUILD_URL_FILE="$GITHUB_WORKSPACE/build-url_qcom-armv8a_${INPUTS_DISTRO_NAME}/build-url_qcom-armv8a_${INPUTS_DISTRO_NAME}"
+            fi
+            echo "${BUILD_URL_FILE}"
+            if [ -f "$BUILD_URL_FILE" ]; then
+                export BUILD_URL=$(cat "${BUILD_URL_FILE}")
+            fi
+            if [ -z "${BUILD_URL}" ]; then
+               echo "BUILD_URL missing"
+               # fail action if BUILD_URL is empty. At this point the variable should be filled in
+               continue
+            fi
+            echo "BUILD_DOWNLOAD_URL=${BUILD_URL}/" >> "${VARS_OUT_PATH}/${machine}.ini"
+
+            echo "ROOTFS_URL=${BUILD_URL}/${INPUTS_DISTRO_NAME}/${machine}/${IMAGE_TYPE}-${machine}.rootfs.qcomflash.tar.gz" >> "${VARS_OUT_PATH}/${machine}.ini"
+
+            if [ "${machine}" = "dragonboard-410c" ]; then
+                echo "ROOTFS_IMG_FILE=${IMAGE_TYPE}-qcom-armv8a.rootfs.ext4" >> "${VARS_OUT_PATH}/${machine}.ini"
+                echo "BOOT_IMG_FILE=boot-apq8016-sbc-qcom-armv8a.img" >> "${VARS_OUT_PATH}/${machine}.ini"
+                echo "BUILD_OS=${INPUTS_DISTRO_NAME}${INPUTS_KERNEL}/" >> "${VARS_OUT_PATH}/${machine}.ini"
+            fi
+            if [ "${machine}" = "dragonboard-820c" ]; then
+                echo "ROOTFS_IMG_FILE=${IMAGE_TYPE}-qcom-armv8a.rootfs.ext4" >> "${VARS_OUT_PATH}/${machine}.ini"
+                echo "BOOT_IMG_FILE=boot-apq8096-db820c-qcom-armv8a.img" >> "${VARS_OUT_PATH}/${machine}.ini"
+                echo "BUILD_OS=${INPUTS_DISTRO_NAME}${INPUTS_KERNEL}/" >> "${VARS_OUT_PATH}/${machine}.ini"
+            fi
+
+            cat "${VARS_OUT_PATH}/${machine}.ini"
+            # INPUTS_TESTPLAN contains distro name
+            lava-test-plans --dry-run --variables "${VARS_OUT_PATH}/${machine}.ini" --test-plan "${PROJECT}/${INPUTS_TESTPLAN}" --device-type "projects/${PROJECT}/devices/${machine}" --dry-run-path "${JOBS_OUT_PATH}/${machine}-${INPUTS_DISTRO_NAME}-${INPUTS_TESTPLAN}" || true
+            # create the JSON file that is used for the job submission matrix
+            find "${JOBS_OUT_PATH}/${machine}-${INPUTS_DISTRO_NAME}-${INPUTS_TESTPLAN}" -name "*.yaml"
+            for JOB_PATH in $( find "${JOBS_OUT_PATH}/${machine}-${INPUTS_DISTRO_NAME}-${INPUTS_TESTPLAN}" -name "*.yaml");
+            do
+              echo "Processing $JOB_PATH"
+              FILENAME=$(basename "${JOB_PATH}")
+              RESULT_NAME="${INPUTS_PREFIX}-${INPUTS_DISTRO_NAME}-${machine}-${FILENAME}"
+              RELATIVE_JOB_PATH=$(realpath -s --relative-to "${JOBS_OUT_PATH}" "${JOB_PATH}")
+              echo "$RELATIVE_JOB_PATH"
+              NAME="${machine}"
+              ARTIFACT="${INPUTS_PREFIX}-${INPUTS_DISTRO_NAME}"
+              RESULT_JSON=$(echo "$RESULT_JSON" | jq -c --arg path "${RELATIVE_JOB_PATH}" --arg artifact "${ARTIFACT}" --arg result_file "${RESULT_NAME}" --arg name "${NAME}" '.target += [$ARGS.named]')
+              echo "$RESULT_JSON"
+            done
+          done
+
+          echo "$RESULT_JSON"
+          echo "jobmatrix=$RESULT_JSON" >> $GITHUB_OUTPUT
+
+      - name: 'Upload test jobs'
+        # only run upload if jobmatrix was generated
+        if: ${{ steps.lava-test-plans.outputs.jobmatrix != '' }}
+        id: upload-test-plans
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.prefix }}-${{ inputs.distro_name }}
+          path: ${{ env.JOBS_OUT_PATH }}/**
+

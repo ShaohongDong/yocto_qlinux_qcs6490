@@ -1,0 +1,25 @@
+-----------------------
+Build Configuration:  |
+-----------------------
+DISTRO = qcom-distro
+DISTRO_VERSION = 2.0
+-----------------------
+Layer Revisions:      |
+-----------------------
+meta-audioreach   = master:c80ebf5be5cc47a1bab1acb4b1987c8cd8b48218
+meta-lts-mixins   = wrynose/linux-firmware:348a9eaaf3991e2329d0cef14dce23fabaef9191
+meta-filesystems  = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-gnome        = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-multimedia   = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-networking   = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-oe           = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-python       = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-xfce         = patched-9af4488d46cb4fd4c0d2d64820c86225ebd6ac71:92145dac5d8035a997518188da3ee6b621ada220
+meta-qcom         = HEAD:ef0004df267743cc89d6a09bc724bc99ff541c01
+meta-qcom-distro  = wrynose:775dc8c710f382ef8183000e7f0d40bc7dcf61cc
+meta-security     = wrynose:c0d1d6200e7a84c39fb940cb1f22aad4b0b3d808
+meta-tpm          = wrynose:c0d1d6200e7a84c39fb940cb1f22aad4b0b3d808
+meta-selinux      = wrynose:1c3a699f363167571ab39fecb0fe6f56691a4e20
+meta-updater      = wrynose:f0e1ccafaa877d2781ed953236981dac57439dc8
+meta-virtualization = wrynose:959a211fbba059689a1c3a1b24fe0abb9224281a
+meta              = wrynose:06dd66e6220e5ce4ed4b9af4d8231ae5f0a8ce80

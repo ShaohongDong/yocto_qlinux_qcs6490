@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/siemens/kas/master/kas/schema-kas.json
+#
+# Include this kas file to enable UEFI FMP capsule generation in the build.
+# It sets QCOM_CAPSULE_FIRMWARE which wires firmware-qcom-capsule into the
+# qcomflash image tarball via image_types_qcom.bbclass.
+#
+# Usage: kas build ci/base.yml:ci/<machine>.yml:ci/capsule.yml
+#        kas build ci/base.yml:ci/<machine>.yml:ci/capsule.yml:ci/capsule-test-keys.yml
+
+header:
+  version: 14
+
+local_conf_header:
+  capsule: |
+    PREFERRED_PROVIDER_virtual/qcom-capsule-firmware = "firmware-qcom-capsule"
+    VIRTUAL-RUNTIME_qcom-capsule-firmware = "firmware-qcom-capsule"

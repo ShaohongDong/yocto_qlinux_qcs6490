@@ -1,0 +1,303 @@
+From 2ec1f5f17812b51f212ecf81d97120eebd4f7365 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Mon, 23 Jun 2025 16:18:31 -0500
+Subject: [PATCH 08/10] whitespace fixes and adjust some sms storage function
+ return values
+
+In general, if we can return a significant value rather than passing
+it in via reference to accept a return value, we should do that to
+simplify the function's signature and logic.
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ src/mm-broadband-modem-qmi.c | 26 +++++------
+ src/mm-sms-storage.c         | 84 ++++++++++++++++++++----------------
+ src/mm-sms-storage.h         | 52 +++++++++++-----------
+ 3 files changed, 89 insertions(+), 73 deletions(-)
+
+diff --git a/src/mm-broadband-modem-qmi.c b/src/mm-broadband-modem-qmi.c
+index 1a0040d8..10b3d82d 100644
+--- a/src/mm-broadband-modem-qmi.c
++++ b/src/mm-broadband-modem-qmi.c
+@@ -7670,8 +7670,6 @@ wms_get_routes_ready (QmiClientWms *client,
+         g_prefix_error (&error, "got invalid SMS routes: ");
+         g_task_return_error (task, error);
+     } else {
+-        MMSmsStorage storage_type = MM_SMS_STORAGE_UNKNOWN;
+-
+         for (i = 0; i < route_list->len; i++) {
+             QmiMessageWmsGetRoutesOutputRouteListElement *route;
+ 
+@@ -7685,28 +7683,31 @@ wms_get_routes_ready (QmiClientWms *client,
+                 }
+             }
+         }
+-        mm_obj_dbg (self, "Default route defined for SMS Messaging is set to store at: %s",
++        mm_obj_dbg (self, "Found modem default SMS storage route %s",
+                     mm_sms_storage_get_string (storage));
+ 
+-        /* Modem Report None either on fresh boot or When user set to TA.
++        /* Modem Report None either on fresh boot or when user set to TA.
+          * To distinguish between fresh boot or normal boot, validate
+          * storage_type variable in storage.
+          * storage_type variable will be Unknown only in first boot after flash.
+          * Thus storage variable can be initialized to UNKNOWN and will
+          * be set to default_storage variable to ME while Enabling. */
+         if (storage == MM_SMS_STORAGE_UNKNOWN) {
+-            if (!mm_sms_get_default_storage_type (&storage_type, &error)) {
++            /* Try to read local saved SMS storage */
++            storage = mm_sms_get_default_storage_type (&error);
++            if (error) {
+                 mm_obj_info (self, "could not get storage_type from storage: %s", error->message);
+                 g_error_free (error);
+-            } else {
+-                /* As Modem reports None for TA Storage, set the
+-                 * * storage to TA and update. */
+-                if (storage_type == MM_SMS_STORAGE_TA) {
+-                    storage = MM_SMS_STORAGE_TA;
+-                }
+             }
+         }
+ 
++        /* If neither modem nor local storage has a route; store locally */
++        if (storage == MM_SMS_STORAGE_UNKNOWN)
++            storage = MM_SMS_STORAGE_TA;
++
++        mm_obj_dbg (self, "Set default SMS storage route to %s",
++                    mm_sms_storage_get_string (storage));
++
+         /* Update the storage_type in storage */
+         if (!mm_sms_update_default_storage_type (storage, &error)) {
+             mm_obj_warn (self, "could not update storage_type in storage: %s", error->message);
+@@ -8189,7 +8190,8 @@ load_messages_from_ta_storage (GTask *task)
+         MMSmsPart         *part;
+         g_autoptr(GError)  error = NULL;
+ 
+-        if (!mm_sms_storage_read_message (msg_index, &pdu, &state, &error)) {
++        pdu = mm_sms_storage_read_message (msg_index, &state, &error);
++        if (!pdu) {
+             mm_obj_warn (self,
+                          "Failed to read the SMS (%d) from storage: %s",
+                          msg_index,
+diff --git a/src/mm-sms-storage.c b/src/mm-sms-storage.c
+index 297f0b66..867f43af 100644
+--- a/src/mm-sms-storage.c
++++ b/src/mm-sms-storage.c
+@@ -32,7 +32,10 @@ static const gchar *dbname = PKGSYSCONFDIR "/smsdb.json";
+ 
+ /** Store message in local storage in "pdu,state" format*/
+ gboolean
+-mm_sms_storage_store_message (gchar *pdu, MMSmsState state, guint32 *idx, GError **error)
++mm_sms_storage_store_message (gchar       *pdu,
++                              MMSmsState   state,
++                              guint32     *idx,
++                              GError     **error)
+ {
+     g_autoptr(JsonParser) parser = NULL;
+     GError *inner_error = NULL;
+@@ -96,7 +99,8 @@ mm_sms_storage_store_message (gchar *pdu, MMSmsState state, guint32 *idx, GError
+ 
+ /* Delete a message of given index from the storage */
+ gboolean
+-mm_sms_storage_delete_message (guint index, GError **error)
++mm_sms_storage_delete_message (guint    index,
++                               GError **error)
+ {
+     g_autoptr(JsonParser) parser = NULL;
+     GError *inner_error = NULL;
+@@ -142,17 +146,20 @@ mm_sms_storage_delete_message (guint index, GError **error)
+     return TRUE;
+ }
+ 
+-/* Read a message of given idex from stoarge */
+-gboolean
+-mm_sms_storage_read_message (guint index, gchar **pdu, MMSmsState *state, GError **error)
++/* Read a message of given index from stoarge and return its PDU */
++gchar *
++mm_sms_storage_read_message (guint        index,
++                             MMSmsState  *state,
++                             GError     **error)
+ {
+-    g_autoptr(JsonParser) parser = NULL;
+-    GError *inner_error = NULL;
+-    g_autoptr(JsonNode) root = NULL;
+-    JsonObject *root_object;
+-    g_autoptr(JsonReader) reader = NULL;
+-    JsonNode *node = NULL;
+-    g_autofree gchar *msg_ref_str = NULL;
++    g_autoptr(JsonParser)  parser = NULL;
++    GError                *inner_error = NULL;
++    g_autoptr(JsonNode)    root = NULL;
++    JsonObject            *root_object;
++    g_autoptr(JsonReader)  reader = NULL;
++    JsonNode              *node = NULL;
++    g_autofree gchar      *msg_ref_str = NULL;
++    JsonObject            *obj;
+ 
+     parser = json_parser_new ();
+ 
+@@ -175,15 +182,20 @@ mm_sms_storage_read_message (guint index, gchar **pdu, MMSmsState *state, GError
+     root_object = json_node_get_object (root);
+     msg_ref_str = g_strdup_printf ("%u", index);
+     node = json_object_get_member (root_object, msg_ref_str);
+-    if (node) {
+-        JsonObject *obj = json_node_get_object (node);
+-        if (pdu)
+-            *pdu = g_strdup (json_object_get_string_member (obj, "pdu"));
+-        if (state)
+-            *state = json_object_get_int_member (obj, "state");
++    if (!node) {
++        g_set_error (error,
++                     MM_CORE_ERROR,
++                     MM_CORE_ERROR_NOT_FOUND,
++                     "Message index %d not found in storage",
++                     index);
++        return FALSE;
+     }
+ 
+-    return TRUE;
++    obj = json_node_get_object (node);
++    if (state)
++        *state = json_object_get_int_member (obj, "state");
++
++    return g_strdup (json_object_get_string_member (obj, "pdu"));
+ }
+ 
+ /* Return all valid indexces */
+@@ -227,7 +239,8 @@ mm_sms_storage_read_all_indexes (GError **error)
+ 
+ /* Store default_storage in local storage to persist across boot */
+ gboolean
+-mm_sms_update_default_storage_type (MMSmsStorage storage, GError **error)
++mm_sms_update_default_storage_type (MMSmsStorage   storage,
++                                    GError       **error)
+ {
+     g_autoptr(JsonParser) parser = NULL;
+     GError *inner_error = NULL;
+@@ -274,14 +287,14 @@ mm_sms_update_default_storage_type (MMSmsStorage storage, GError **error)
+     return TRUE;
+ }
+ 
+-gboolean
+-mm_sms_get_default_storage_type (guint32 *storage, GError **error)
++MMSmsStorage
++mm_sms_get_default_storage_type (GError  **error)
+ {
+-    g_autoptr(JsonParser) parser = NULL;
+-    GError *inner_error = NULL;
+-    guint storage_ref = 0; // Default value MM_SMS_STORAGE_UNKNOWN = 0
+-    g_autoptr(JsonNode) root = NULL;
+-    g_autoptr(JsonReader) reader = NULL;
++    g_autoptr(JsonParser)  parser = NULL;
++    GError                *inner_error = NULL;
++    MMSmsStorage           storage = MM_SMS_STORAGE_UNKNOWN;
++    g_autoptr(JsonNode)    root = NULL;
++    g_autoptr(JsonReader)  reader = NULL;
+ 
+     parser = json_parser_new ();
+ 
+@@ -291,25 +304,22 @@ mm_sms_get_default_storage_type (guint32 *storage, GError **error)
+     }
+ 
+     root = json_parser_get_root (parser);
+-    if (JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
+-        *storage = MM_SMS_STORAGE_UNKNOWN;
+-        return TRUE;
+-    }
++    if (JSON_NODE_TYPE(root) != JSON_NODE_OBJECT)
++        return storage;
+ 
+     // read the member default_storage
+     reader = json_reader_new (root);
+     if (json_reader_read_member (reader, "default_storage")) {
+-        storage_ref = mm_common_get_sms_storage_from_string (json_reader_get_string_value (reader),
+-                                                             &inner_error);
++        storage = mm_common_get_sms_storage_from_string (json_reader_get_string_value (reader),
++                                                         &inner_error);
+         if (inner_error) {
+-            storage_ref = 0;
++            storage = MM_SMS_STORAGE_UNKNOWN;
+             g_clear_error (&inner_error);
+         }
+     }
+     json_reader_end_member (reader);
+ 
+-    *storage = storage_ref;
+-    return TRUE;
++    return storage;
+ }
+ 
+ MMSmsPart *
+@@ -335,7 +345,7 @@ mm_create_sms_part_from_pdu (guint       index,
+ 
+ gchar *
+ mm_create_sms_pdu (const guint8 *pdu,
+-                   gsize        pdulen)
++                   gsize         pdulen)
+ {
+     return mm_utils_bin2hexstr (pdu, pdulen);
+ }
+diff --git a/src/mm-sms-storage.h b/src/mm-sms-storage.h
+index 4aa014be..5a452885 100644
+--- a/src/mm-sms-storage.h
++++ b/src/mm-sms-storage.h
+@@ -20,28 +20,32 @@
+ #include <glib.h>
+ #include <ModemManager.h>
+ 
+-gboolean
+-mm_sms_storage_store_message(gchar *pdu,
+-                             MMSmsState state, guint32 *idx, GError **error);
+-gboolean
+-mm_sms_storage_delete_message (guint index, GError **error);
+-
+-gboolean
+-mm_sms_storage_read_message (guint index,
+-                             gchar **pdu, MMSmsState *state, GError **error);
+-GList *
+-mm_sms_storage_read_all_indexes (GError **error);
+-
+-gboolean
+-mm_sms_update_default_storage_type (MMSmsStorage storage, GError **error);
+-
+-gboolean
+-mm_sms_get_default_storage_type (guint32 *storage, GError **error);
+-
+-MMSmsPart *
+-mm_create_sms_part_from_pdu (guint index, const gchar *hexpdu, MMSmsState state,
+-                                         gpointer log_object, GError **error);
+-
+-gchar *
+-mm_create_sms_pdu (const guint8 *pdu, gsize pdulen);
++gboolean     mm_sms_storage_store_message       (gchar       *pdu,
++                                                 MMSmsState   state,
++                                                 guint32     *idx,
++                                                 GError     **error);
++
++gboolean     mm_sms_storage_delete_message      (guint    index,
++                                                 GError **error);
++
++gchar *      mm_sms_storage_read_message        (guint        index,
++                                                 MMSmsState  *state,
++                                                 GError     **error);
++
++GList *      mm_sms_storage_read_all_indexes    (GError **error);
++
++gboolean     mm_sms_update_default_storage_type (MMSmsStorage   storage,
++                                                 GError       **error);
++
++MMSmsStorage mm_sms_get_default_storage_type    (GError **error);
++
++MMSmsPart *  mm_create_sms_part_from_pdu        (guint         index,
++                                                 const gchar  *hexpdu,
++                                                 MMSmsState    state,
++                                                 gpointer      log_object,
++                                                 GError      **error);
++
++gchar *      mm_create_sms_pdu                  (const guint8 *pdu,
++                                                 gsize         pdulen);
++
+ #endif /* MM_SMS_STORAGE_H */
+-- 
+2.34.1
+

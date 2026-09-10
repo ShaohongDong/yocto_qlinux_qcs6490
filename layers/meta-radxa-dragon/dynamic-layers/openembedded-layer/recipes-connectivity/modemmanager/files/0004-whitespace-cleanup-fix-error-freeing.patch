@@ -1,0 +1,102 @@
+From 94b072b2bfc766b9c8d2288d324d77d3a4ebcef6 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Mon, 23 Jun 2025 09:46:01 -0500
+Subject: [PATCH 04/10] whitespace cleanup; fix error freeing
+
+Need to have the error freed each element of the list, rather than once
+for all of them.
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ src/mm-broadband-modem-qmi.c | 66 ++++++++++++++++++++----------------
+ 1 file changed, 37 insertions(+), 29 deletions(-)
+
+diff --git a/src/mm-broadband-modem-qmi.c b/src/mm-broadband-modem-qmi.c
+index 746d98f7..6c871458 100644
+--- a/src/mm-broadband-modem-qmi.c
++++ b/src/mm-broadband-modem-qmi.c
+@@ -8187,44 +8187,52 @@ mm_create_sms_part_from_pdu (guint        index,
+ static void
+ load_messages_from_ta_storage (GTask *task)
+ {
+-    MMBroadbandModemQmi *self;
++    MMBroadbandModemQmi        *self;
+     LoadInitialSmsPartsContext *ctx;
+-    GList *indexs, *l;
+-    gchar *pdu;
+-    MMSmsState state;
+-    g_autoptr(GError)  error = NULL;
++    GList                      *indexes, *l;
++    gchar                      *pdu;
++    MMSmsState                  state;
+ 
+     self = g_task_get_source_object (task);
+     ctx = g_task_get_task_data (task);
+     mm_obj_dbg (self, "load_messages_from_ta_storage");
++
+     /* read all indexes from storage */
+-    indexs = mm_sms_storage_read_all_indexes (&error);
++    indexes = mm_sms_storage_read_all_indexes (&error);
++    for (l = indexes; l; l = g_list_next (l)) {
++        guint              msg_index = GPOINTER_TO_UINT (l->data);
++        MMSmsPart         *part;
++        g_autoptr(GError)  error = NULL;
++
++        if (!mm_sms_storage_read_message (msg_index, &pdu, &state, &error)) {
++            mm_obj_warn (self,
++                         "Failed to read the SMS (%d) from storage: %s",
++                         msg_index,
++                         error->message);
++            continue;
++        }
+ 
+-    for (l = indexs; l; l = g_list_next (l))
+-    {
+-        guint msg_index = GPOINTER_TO_UINT (l->data);
+-        if (mm_sms_storage_read_message (msg_index, &pdu, &state, &error)) {
+-
+-            MMSmsPart *part;
+-            part = mm_create_sms_part_from_pdu (msg_index, (const char *)pdu, state, self, &error);
+-            if (part) {
+-                mm_obj_dbg (self, "correctly parsed PDU (%d)", msg_index);
+-                mm_iface_modem_messaging_take_part (MM_IFACE_MODEM_MESSAGING (self),
+-                                                    mm_broadband_modem_create_sms (MM_BROADBAND_MODEM (MM_IFACE_MODEM_MESSAGING(self))),
+-                                                    part,
+-                                                    state != MM_SMS_STATE_UNKNOWN ? state: MM_SMS_STATE_STORED,
+-                                                    ctx->storage,
+-                                                    &error);
+-            } else {
+-                /* Don't treat the error as critical */
+-                mm_obj_dbg (self, "error parsing PDU (%d): %s", msg_index, error->message);
+-            }
+-        } else {
+-            mm_obj_warn (self, "Failed to read the messages");
++        part = mm_create_sms_part_from_pdu (msg_index, pdu, state, self, &error);
++        if (!part) {
++            /* Don't treat the error as critical */
++            mm_obj_dbg (self, "error parsing SMS (%d) PDU: %s", msg_index, error->message);
++            continue;
+         }
+-   }
+ 
+-   g_task_return_boolean (task, TRUE);
++        mm_obj_dbg (self, "parsed SMS (%d) PDU", msg_index);
++        if (!mm_iface_modem_messaging_take_part (MM_IFACE_MODEM_MESSAGING (self),
++                                                 part,
++                                                 state != MM_SMS_STATE_UNKNOWN ? state : MM_SMS_STATE_STORED,
++                                                 ctx->storage)) {
++            /* Don't treat the error as critical */
++            mm_obj_dbg (self,
++                        "error adding SMS (%d): %s",
++                        msg_index,
++                        error->message);
++        }
++    }
++
++    g_task_return_boolean (task, TRUE);
+ }
+ 
+ static void
+-- 
+2.34.1
+

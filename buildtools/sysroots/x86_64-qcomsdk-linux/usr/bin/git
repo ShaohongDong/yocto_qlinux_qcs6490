@@ -1,0 +1,5 @@
+#!/bin/bash
+realpath=`readlink -fn $0`
+realdir=`dirname $realpath`
+export GIT_EXEC_PATH=`dirname $realpath`/../libexec/git-core GIT_TEMPLATE_DIR=`dirname $realpath`/../share/git-core/templates
+exec -a "$0" $realdir/git.real "$@"

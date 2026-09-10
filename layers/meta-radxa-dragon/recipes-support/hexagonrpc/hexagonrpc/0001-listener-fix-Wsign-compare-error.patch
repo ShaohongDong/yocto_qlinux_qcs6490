@@ -1,0 +1,33 @@
+From 146d0e1dab2870d50d86896f9f18cae42e988821 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Mon, 12 May 2025 13:16:06 +0300
+Subject: [PATCH] listener: fix Wsign-compare error
+
+Fix warning / error reported by gcc:
+
+../git/hexagonrpcd/listener.c:115:25: warning: comparison of integer expressions of different signedness: 'uint32_t' {aka 'unsigned int'} and 'int' [-Wsign-compare]
+         if (inbufs[0].s != 4 * (def->in_nums
+                         ^~
+
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Upstream-Status: Submitted [https://github.com/linux-msm/hexagonrpc/pull/12]
+---
+ hexagonrpcd/listener.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index 9de0a1632825..932c54d58af5 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -112,7 +112,7 @@ static int check_inbuf_sizes(const struct fastrpc_function_def_interp2 *def,
+ 	uint8_t i;
+ 	const uint32_t *sizes = &((const uint32_t *) inbufs[0].p)[def->in_nums];
+ 
+-	if (inbufs[0].s != 4 * (def->in_nums
++	if (inbufs[0].s != 4U * (def->in_nums
+ 			      + def->in_bufs
+ 			      + def->out_bufs)) {
+ 		fprintf(stderr, "Invalid number of input numbers: %" PRIu32 " (expected %u)\n",
+-- 
+2.47.2
+

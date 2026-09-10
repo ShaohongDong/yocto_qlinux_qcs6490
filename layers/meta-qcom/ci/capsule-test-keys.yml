@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/siemens/kas/master/kas/schema-kas.json
+#
+# Include this kas file to enable test PKI keys for UEFI capsule signing.
+# These keys are for CI/development use only and must NOT be used in
+# production images.
+#
+# Usage: kas build ci/base.yml:ci/<machine>.yml:ci/capsule-test-keys.yml
+
+header:
+  version: 14
+
+local_conf_header:
+  capsule-test-keys: |
+    CAPSULE_ROOT_CER = "${LAYERDIR_qcom}/ci/test-keys/QcFMPRoot.cer"
+    CAPSULE_CERT_PEM = "${LAYERDIR_qcom}/ci/test-keys/QcFMPCert.pem"
+    CAPSULE_ROOT_PUB = "${LAYERDIR_qcom}/ci/test-keys/QcFMPRoot.pub.pem"
+    CAPSULE_SUB_PUB  = "${LAYERDIR_qcom}/ci/test-keys/QcFMPSub.pub.pem"

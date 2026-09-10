@@ -1,0 +1,29 @@
+OSTREE_BOOTLOADER ?= "systemd-boot"
+EFI_PROVIDER:sota = "${@ 'grub-efi' if d.getVar('OSTREE_BOOTLOADER') == 'grub' else 'systemd-boot' }"
+PACKAGECONFIG:append:pn-systemd = " ${@ 'efi' if d.getVar('OSTREE_BOOTLOADER') == 'systemd-boot' else '' }"
+
+# Prepare a flat image directory structure suitable to flash with QDL
+IMAGE_CLASSES += "image_types_qcom"
+IMAGE_FSTYPES += "ota-esp qcomflash"
+IMAGE_TYPEDEP:qcomflash += "ota-ext4 ota-esp"
+
+# Handled by ostree
+UKI_CMDLINE = ""
+OSTREE_KERNEL_ARGS ?= "console=ttyMSM0,115200 ${OSTREE_KERNEL_ARGS_COMMON} ${KERNEL_CMDLINE_EXTRA}"
+
+# No custom esp image required
+QCOM_ESP_IMAGE = ""
+QCOM_ESP_FILE = "${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.ota-esp"
+IMAGE_QCOMFLASH_FS_TYPE = "ota-ext4"
+
+EXTRA_IMAGECMD:ota-esp = "-s 1 -S ${QCOM_VFAT_SECTOR_SIZE}"
+
+UKI_IMAGE_CLASS = "uki"
+# No support for UKI on armv7
+UKI_IMAGE_CLASS:qcom-armv7a = ""
+IMAGE_CLASSES += "${UKI_IMAGE_CLASS}"
+IMAGE_CLASSES:remove:pn-initramfs-ostree-image = "${UKI_IMAGE_CLASS}"
+
+# Enable OSTree boot counting to generate correct BLS entry filenames (e.g. ostree-2+3.conf)
+OSTREE_REPO_CONFIG:append = " sysroot.boot-counting-tries:3"
+OSTREE_OTA_REPO_CONFIG:append = " sysroot.boot-counting-tries:3"

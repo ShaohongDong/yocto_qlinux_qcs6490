@@ -1,0 +1,69 @@
+SECTION = "kernel"
+
+DESCRIPTION = "Linux ${PV} kernel for QCOM devices"
+LICENSE = "GPL-2.0-only"
+LIC_FILES_CHKSUM = "file://COPYING;md5=6bc538ed5bd9a7fc9398086aedcd7e46"
+
+inherit kernel cml1
+
+COMPATIBLE_MACHINE = "(qcom)"
+
+LINUX_QCOM_FIT_DTB_COMPATIBLE = "conf/machine/include/fit-dtb-compatible-linux-qcom.inc"
+
+LINUX_VERSION ?= "6.18.37"
+
+PV = "${LINUX_VERSION}"
+
+FILESEXTRAPATHS:prepend := "${THISDIR}/linux-qcom-6.18:"
+
+KERNEL_PAHOLE ?= '${@oe.utils.vartrue("DEBUG_BUILD", bb.utils.contains("BBFILE_COLLECTIONS", "openembedded-layer", "1", "0", d), "0", d)}'
+do_configure[depends] += '${@oe.utils.vartrue("KERNEL_PAHOLE", "pahole-native:do_populate_sysroot", "", d)}'
+EXTRA_OEMAKE += '${@oe.utils.vartrue("KERNEL_PAHOLE", "", "PAHOLE=false", d)}'
+
+# tag:qcom-6.18.y-20260812
+SRCREV ?= "bfeb0e5567c0987f05faeec78664719b718133e5"
+
+SRCBRANCH ?= "nobranch=1"
+SRCBRANCH:class-devupstream ?= "branch=qcom-6.18.y"
+
+SRC_URI = " \
+    git://github.com/qualcomm-linux/kernel.git;${SRCBRANCH};protocol=https \
+    file://0001-tools-use-basename-to-identify-file-in-gen-mach-type.patch \
+    file://0001-dt-bindings-phy-qcom-sc8280xp-qmp-usb43dp-phy-Docume.patch \
+    file://0002-phy-qcom-qmp-combo-get-the-USB3-DisplayPort-lanes-ma.patch \
+    file://0003-arm64-dts-qcom-x1e78100-lenovo-thinkpad-t14s-add-HDM.patch \
+    file://0004-scsi-ufs-qcom-Add-support-for-UFS-module-detection.patch \
+    file://0005-ufs-qcom-add-PA_TACTIVATE-quirk-for-Kioxia-THGJFGT1E.patch \
+    file://0006-arm64-dts-qcom-qcs6490-Add-Radxa-Dragon-Q6A.patch \
+"
+
+# Additional kernel configs.
+SRC_URI += " \
+    file://configs/bsp-additions.cfg \
+    file://configs/radxa-dragon.cfg \
+"
+
+# To build tip of qcom-6.18.y branch set preferred
+# virtual/kernel provider to 'linux-qcom-6.18.y-upstream'
+BBCLASSEXTEND = "devupstream:target"
+PN:class-devupstream = "linux-qcom-6.18.y-upstream"
+SRCREV:class-devupstream ?= "${AUTOREV}"
+
+S = "${UNPACKDIR}/${BP}"
+
+KBUILD_DEFCONFIG ?= "defconfig"
+KBUILD_DEFCONFIG:qcom-armv7a = "qcom_defconfig"
+
+KBUILD_CONFIG_EXTRA = "${@bb.utils.contains('DISTRO_FEATURES', 'hardened', '${S}/kernel/configs/hardening.config', '', d)}"
+KBUILD_CONFIG_EXTRA:append:aarch64 = " ${S}/arch/arm64/configs/prune.config"
+KBUILD_CONFIG_EXTRA:append:aarch64 = " ${S}/arch/arm64/configs/qcom.config"
+KBUILD_CONFIG_EXTRA:append = " ${@oe.utils.vartrue('DEBUG_BUILD', '${S}/kernel/configs/debug.config', '', d)}"
+KBUILD_CONFIG_EXTRA:append:aarch64 = " ${@oe.utils.vartrue('DEBUG_BUILD', '${S}/arch/arm64/configs/qcom_debug.config', '', d)}"
+
+do_configure:prepend() {
+    # Use a copy of the 'defconfig' from the actual repo to merge fragments
+    cp ${S}/arch/${ARCH}/configs/${KBUILD_DEFCONFIG} ${B}/.config
+
+    # Merge fragment for QCOM value add features
+    ${S}/scripts/kconfig/merge_config.sh -m -O ${B} ${B}/.config ${KBUILD_CONFIG_EXTRA} ${@" ".join(find_cfgs(d))}
+}

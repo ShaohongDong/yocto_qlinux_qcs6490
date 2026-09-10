@@ -1,0 +1,26 @@
+From aa13b855374e86acf61aedc6ba14c274e386a1f0 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Mon, 23 Jun 2025 09:45:06 -0500
+Subject: [PATCH 03/10] whitespace cleanup
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ src/mm-iface-modem-messaging.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/mm-iface-modem-messaging.c b/src/mm-iface-modem-messaging.c
+index 593cc95b..6b184c9e 100644
+--- a/src/mm-iface-modem-messaging.c
++++ b/src/mm-iface-modem-messaging.c
+@@ -1070,7 +1070,7 @@ interface_enabling_step (GTask *task)
+ 
+         /* Update storage with default_storage variable */
+         if (!mm_sms_update_default_storage_type (default_storage, &error)) {
+-          mm_obj_warn (self, "could not update default_storage in storage: %s", error->message);
++            mm_obj_warn (self, "could not update default_storage in storage: %s", error->message);
+         }
+ 
+         if (default_storage == MM_SMS_STORAGE_UNKNOWN)
+-- 
+2.34.1
+

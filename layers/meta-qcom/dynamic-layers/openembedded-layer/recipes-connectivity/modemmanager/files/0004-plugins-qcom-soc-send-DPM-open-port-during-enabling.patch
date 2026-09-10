@@ -1,0 +1,173 @@
+From 17898a1798d23073304327b28f3d200964a1ef06 Mon Sep 17 00:00:00 2001
+From: Harsh Sharma <hsharm@qti.qualcomm.com>
+Date: Wed, 27 May 2026 23:36:35 -0700
+Subject: [PATCH 4/5] plugins: qcom-soc: send DPM open port during
+ enabling_modem_init
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1452]
+Signed-off-by: Harsh Sharma <hsharm@qti.qualcomm.com>
+---
+ .../mm-broadband-modem-qmi-qcom-soc.c         | 133 ++++++++++++++++++
+ 1 file changed, 133 insertions(+)
+
+diff --git a/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c b/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
+index fa19bd4d..39c58463 100644
+--- a/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
++++ b/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
+@@ -21,9 +21,12 @@
+ #include <unistd.h>
+ #include <ctype.h>
+ 
++#include <libqmi-glib.h>
++
+ #include "ModemManager.h"
+ #include "mm-log.h"
+ #include "mm-iface-modem.h"
++#include "mm-port-qmi.h"
+ #include "mm-broadband-modem-qmi-qcom-soc.h"
+ 
+ G_DEFINE_TYPE (MMBroadbandModemQmiQcomSoc, mm_broadband_modem_qmi_qcom_soc, MM_TYPE_BROADBAND_MODEM_QMI)
+@@ -169,10 +172,140 @@ mm_broadband_modem_qmi_qcom_soc_init (MMBroadbandModemQmiQcomSoc *self)
+ {
+ }
+ 
++static void
++dpm_open_ready (QmiClientDpm *client,
++                GAsyncResult *res,
++                GTask        *task)
++{
++    g_autoptr(QmiMessageDpmOpenPortOutput) output = NULL;
++    g_autoptr(GError) error = NULL;
++
++    output = qmi_client_dpm_open_port_finish (client, res, &error);
++    if (!output || !qmi_message_dpm_open_port_output_get_result (output, &error))
++        mm_obj_warn (g_task_get_source_object (task),
++                     "DPM port open failed: %s - wwan0 may not appear", error->message);
++
++    g_task_return_boolean (task, TRUE);
++    g_object_unref (task);
++}
++
++static void
++allocate_client_dpm_ready (QmiDevice    *device,
++                           GAsyncResult *res,
++                           GTask        *task)
++{
++    MMBroadbandModem *self;
++    g_autoptr(QmiClient) dpm_client = NULL;
++    g_autoptr(GError) error = NULL;
++    QmiMessageDpmOpenPortInputHardwareDataPortsElement hw_port;
++    g_autoptr(GArray) hw_data_ports = NULL;
++    g_autoptr(QmiMessageDpmOpenPortInput) input = NULL;
++
++    self = g_task_get_source_object (task);
++
++    dpm_client = qmi_device_allocate_client_finish (device, res, &error);
++    if (!dpm_client) {
++        mm_obj_warn (self, "failed to allocate DPM client: %s", error->message);
++        g_task_return_boolean (task, TRUE);
++        g_object_unref (task);
++        return;
++    }
++
++    /* Hardware data port: ep-type=BAM_DMUX, iface=0, rx/tx-id=1 */
++    hw_port.endpoint_type      = QMI_DATA_ENDPOINT_TYPE_BAM_DMUX;
++    hw_port.interface_number   = 0;
++    hw_port.rx_endpoint_number = 1;
++    hw_port.tx_endpoint_number = 1;
++
++    hw_data_ports = g_array_new (FALSE, FALSE,
++                       sizeof (QmiMessageDpmOpenPortInputHardwareDataPortsElement));
++    g_array_append_val (hw_data_ports, hw_port);
++
++    /* Control port: ep-type=BAM_DMUX, iface=0, port-name="bam-dmux" */
++    {
++        QmiMessageDpmOpenPortInputControlPortsElement  ctrl_port;
++        g_autoptr(GArray)                              ctrl_ports = NULL;
++
++        ctrl_port.endpoint_type    = QMI_DATA_ENDPOINT_TYPE_BAM_DMUX;
++        ctrl_port.interface_number = 0;
++        ctrl_port.port_name        = (gchar *) "bam-dmux";
++
++        ctrl_ports = g_array_new (FALSE, FALSE,
++                         sizeof (QmiMessageDpmOpenPortInputControlPortsElement));
++        g_array_append_val (ctrl_ports, ctrl_port);
++
++        input = qmi_message_dpm_open_port_input_new ();
++        qmi_message_dpm_open_port_input_set_hardware_data_ports (input, hw_data_ports, NULL);
++        qmi_message_dpm_open_port_input_set_control_ports (input, ctrl_ports, NULL);
++    }
++
++    qmi_client_dpm_open_port (QMI_CLIENT_DPM (dpm_client),
++                              input,
++                              10,
++                              g_task_get_cancellable (task),
++                              (GAsyncReadyCallback) dpm_open_ready,
++                              task);
++}
++
++static void
++enabling_modem_init_bam_dmux (MMBroadbandModem *self,
++                              GAsyncReadyCallback callback,
++                              gpointer user_data)
++{
++    GTask *task;
++    MMPortQmi *qmi_port;
++    QmiDevice *device;
++
++    task = g_task_new (self, NULL, callback, user_data);
++
++    /* Only run this specific logic for bam-dmux modems */
++    if (!mm_base_modem_get_bam_dmux_pending (MM_BASE_MODEM (self))) {
++        g_task_return_boolean (task, TRUE);
++        g_object_unref (task);
++        return;
++    }
++
++    qmi_port = mm_broadband_modem_qmi_peek_port_qmi (MM_BROADBAND_MODEM_QMI (self));
++    if (!qmi_port || !mm_port_qmi_is_open (qmi_port)) {
++        mm_obj_warn (self, "QMI port not ready for DPM send");
++        g_task_return_boolean (task, TRUE);
++        g_object_unref (task);
++        return;
++    }
++
++    device = mm_port_qmi_peek_device (qmi_port);
++    if (!device) {
++        mm_obj_warn (self, "QMI device not ready for DPM send");
++        g_task_return_boolean (task, TRUE);
++        g_object_unref (task);
++        return;
++    }
++
++    qmi_device_allocate_client (device,
++                                QMI_SERVICE_DPM,
++                                QMI_CID_NONE,
++                                10,
++                                g_task_get_cancellable (task),
++                                (GAsyncReadyCallback) allocate_client_dpm_ready,
++                                task);
++}
++
++static gboolean
++enabling_modem_init_bam_dmux_finish (MMBroadbandModem  *self,
++                                     GAsyncResult      *res,
++                                     GError           **error)
++{
++    return g_task_propagate_boolean (G_TASK (res), error);
++}
++
+ static void
+ mm_broadband_modem_qmi_qcom_soc_class_init (MMBroadbandModemQmiQcomSocClass *klass)
+ {
++    MMBroadbandModemClass *broadband_modem_class = MM_BROADBAND_MODEM_CLASS (klass);
+     MMBroadbandModemQmiClass *broadband_modem_qmi_class = MM_BROADBAND_MODEM_QMI_CLASS (klass);
+ 
+     broadband_modem_qmi_class->peek_port_qmi_for_data = peek_port_qmi_for_data;
++
++    broadband_modem_class->enabling_modem_init = enabling_modem_init_bam_dmux;
++    broadband_modem_class->enabling_modem_init_finish = enabling_modem_init_bam_dmux_finish;
+ }
+-- 
+2.34.1
+

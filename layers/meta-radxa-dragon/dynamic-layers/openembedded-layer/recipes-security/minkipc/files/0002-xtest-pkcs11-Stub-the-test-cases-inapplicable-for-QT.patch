@@ -1,0 +1,223 @@
+From 62115299515bb7babda3f2db0b585b582662327e Mon Sep 17 00:00:00 2001
+From: Harshal Dev <harshal.dev@oss.qualcomm.com>
+Date: Fri, 3 Apr 2026 17:00:02 +0530
+Subject: [PATCH 2/2] xtest: pkcs11: Stub the test cases inapplicable for QTEE
+
+Mark and stub out the test cases which are inapplicable for QTEE.
+
+Upstream-Status: Inappropriate [tests applicable for optee]
+
+Signed-off-by: Harshal Dev <harshal.dev@oss.qualcomm.com>
+---
+ host/xtest/pkcs11_1000.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/host/xtest/pkcs11_1000.c b/host/xtest/pkcs11_1000.c
+index a55691d..690610f 100644
+--- a/host/xtest/pkcs11_1000.c
++++ b/host/xtest/pkcs11_1000.c
+@@ -4098,6 +4098,7 @@ close_lib:
+ ADBG_CASE_DEFINE(pkcs11, 1015, xtest_pkcs11_test_1015,
+		 "PKCS11: Test C_CopyObject()");
+
++#ifdef BUILD_FOR_OPTEE
+ static void xtest_pkcs11_test_1016(ADBG_Case_t *c)
+ {
+	CK_RV rv = CKR_GENERAL_ERROR;
+@@ -4186,6 +4187,7 @@ close_lib:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1016, xtest_pkcs11_test_1016,
+		 "PKCS11: Random number generator tests");
++#endif
+
+ static CK_RV derive_sym_key(CK_SESSION_HANDLE session,
+			    CK_OBJECT_HANDLE parent_key,
+@@ -4629,6 +4631,8 @@ ADBG_CASE_DEFINE(pkcs11, 1017, xtest_pkcs11_test_1017,
+
+ /* Digest test patterns */
+ static const char digest_test_pattern[] = "The quick brown fox jumps over the lazy dog";
++
++#ifdef BUILD_FOR_OPTEE
+ static const char digest_test_pattern_empty[] = "";
+
+ /* MD5 checksums for digest test patterns */
+@@ -4640,16 +4644,20 @@ static const uint8_t digest_test_pattern_empty_md5[] = {
+	0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98,
+	0xec, 0xf8, 0x42, 0x7e
+ };
++#endif
+
+ /* SHA-1 checksums for digest test patterns */
+ static const uint8_t digest_test_pattern_sha1[] = {
+	0x2f, 0xd4, 0xe1, 0xc6, 0x7a, 0x2d, 0x28, 0xfc, 0xed, 0x84, 0x9e, 0xe1,
+	0xbb, 0x76, 0xe7, 0x39, 0x1b, 0x93, 0xeb, 0x12
+ };
++
++#ifdef BUILD_FOR_OPTEE
+ static const uint8_t digest_test_pattern_empty_sha1[] = {
+	0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef,
+	0x95, 0x60, 0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09
+ };
++#endif
+
+ /* SHA-224 checksums for digest test patterns */
+ static const uint8_t digest_test_pattern_sha224[] = {
+@@ -4657,11 +4665,14 @@ static const uint8_t digest_test_pattern_sha224[] = {
+	0x9a, 0xa2, 0x32, 0x5d, 0x24, 0x30, 0x58, 0x7d, 0xdb, 0xc0, 0xc3, 0x8b,
+	0xad, 0x91, 0x15, 0x25
+ };
++
++#ifdef BUILD_FOR_OPTEE
+ static const uint8_t digest_test_pattern_empty_sha224[] = {
+	0xd1, 0x4a, 0x02, 0x8c, 0x2a, 0x3a, 0x2b, 0xc9, 0x47, 0x61, 0x02, 0xbb,
+	0x28, 0x82, 0x34, 0xc4, 0x15, 0xa2, 0xb0, 0x1f, 0x82, 0x8e, 0xa6, 0x2a,
+	0xc5, 0xb3, 0xe4, 0x2f
+ };
++#endif
+
+ /* SHA-256 checksums for digest test patterns */
+ static const uint8_t digest_test_pattern_sha256[] = {
+@@ -4669,11 +4680,14 @@ static const uint8_t digest_test_pattern_sha256[] = {
+	0xb0, 0x08, 0x2e, 0x4f, 0x8d, 0x56, 0x51, 0xe4, 0x6d, 0x3c, 0xdb, 0x76,
+	0x2d, 0x02, 0xd0, 0xbf, 0x37, 0xc9, 0xe5, 0x92
+ };
++
++#ifdef BUILD_FOR_OPTEE
+ static const uint8_t digest_test_pattern_empty_sha256[] = {
+	0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8,
+	0x99, 0x6f, 0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+	0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55
+ };
++#endif
+
+ /* SHA-384 checksums for digest test patterns */
+ static const uint8_t digest_test_pattern_sha384[] = {
+@@ -4682,12 +4696,15 @@ static const uint8_t digest_test_pattern_sha384[] = {
+	0x40, 0x11, 0xe3, 0x31, 0x7d, 0xbf, 0x9a, 0x50, 0x9c, 0xb1, 0xe5, 0xdc,
+	0x1e, 0x85, 0xa9, 0x41, 0xbb, 0xee, 0x3d, 0x7f, 0x2a, 0xfb, 0xc9, 0xb1
+ };
++
++#ifdef BUILD_FOR_OPTEE
+ static const uint8_t digest_test_pattern_empty_sha384[] = {
+	0x38, 0xb0, 0x60, 0xa7, 0x51, 0xac, 0x96, 0x38, 0x4c, 0xd9, 0x32, 0x7e,
+	0xb1, 0xb1, 0xe3, 0x6a, 0x21, 0xfd, 0xb7, 0x11, 0x14, 0xbe, 0x07, 0x43,
+	0x4c, 0x0c, 0xc7, 0xbf, 0x63, 0xf6, 0xe1, 0xda, 0x27, 0x4e, 0xde, 0xbf,
+	0xe7, 0x6f, 0x65, 0xfb, 0xd5, 0x1a, 0xd2, 0xf1, 0x48, 0x98, 0xb9, 0x5b
+ };
++#endif
+
+ /* SHA-512 checksums for digest test patterns */
+ static const uint8_t digest_test_pattern_sha512[] = {
+@@ -4698,6 +4715,8 @@ static const uint8_t digest_test_pattern_sha512[] = {
+	0xe1, 0xbf, 0xd7, 0x09, 0x78, 0x21, 0x23, 0x3f, 0xa0, 0x53, 0x8f, 0x3d,
+	0xb8, 0x54, 0xfe, 0xe6
+ };
++
++#ifdef BUILD_FOR_OPTEE
+ static const uint8_t digest_test_pattern_empty_sha512[] = {
+	0xcf, 0x83, 0xe1, 0x35, 0x7e, 0xef, 0xb8, 0xbd, 0xf1, 0x54, 0x28, 0x50,
+	0xd6, 0x6d, 0x80, 0x07, 0xd6, 0x20, 0xe4, 0x05, 0x0b, 0x57, 0x15, 0xdc,
+@@ -4706,6 +4725,7 @@ static const uint8_t digest_test_pattern_empty_sha512[] = {
+	0x63, 0xb9, 0x31, 0xbd, 0x47, 0x41, 0x7a, 0x81, 0xa5, 0x38, 0x32, 0x7a,
+	0xf9, 0x27, 0xda, 0x3e
+ };
++#endif
+
+ #define DIGEST_TEST(_test_name, _mecha, _data, _digest) \
+	{ \
+@@ -4717,6 +4737,7 @@ static const uint8_t digest_test_pattern_empty_sha512[] = {
+		.digest_size = sizeof(_digest) \
+	}
+
++#ifdef BUILD_FOR_OPTEE
+ /* Digest simple test suite */
+ static struct {
+	const char *test_name;
+@@ -5435,6 +5456,7 @@ close_lib:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1018, xtest_pkcs11_test_1018,
+		 "PKCS11: Digest tests");
++#endif
+
+ /**
+  *    0:d=0  hl=2 l=  22 cons: SEQUENCE
+@@ -5448,6 +5470,7 @@ static uint8_t subject_common_name[] = {
+	0x0b, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x20, 0x6e, 0x61, 0x6d, 0x65
+ };
+
++#ifdef BUILD_FOR_OPTEE
+ /**
+  *    0:d=0  hl=2 l=   8 prim: OBJECT            :prime256v1
+  */
+@@ -5805,6 +5828,7 @@ close_lib:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1019, xtest_pkcs11_test_1019,
+		 "PKCS11: Elliptic Curve key generation and signing");
++#endif
+
+ #define WRAPPED_TEST_KEY_SIZE	48
+
+@@ -6449,6 +6473,7 @@ ADBG_CASE_DEFINE(pkcs11, 1020, xtest_pkcs11_test_1020,
+		.data_size = sizeof(_data) - 1, \
+	}
+
++#ifdef BUILD_FOR_OPTEE
+ /* List of RSA PKCS signing multi stage digest mechanisms */
+ static struct {
+	const char *test_name;
+@@ -6800,6 +6825,7 @@ close_lib:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1021, xtest_pkcs11_test_1021,
+		 "PKCS11: RSA PKCS key generation and signing");
++#endif
+
+ #define RSA_PSS_HASH_SIGN_TEST(_test_name, _min_rsa_bits, _mecha, _hash_algo, _mgf_algo, \
+			       _salt_len, _data) \
+@@ -8006,6 +8032,7 @@ struct eddsa_test {
+	size_t context_len;
+ };
+
++#ifdef BUILD_FOR_OPTEE
+ static CK_BYTE ed25519_params[] = {
+	0x06, 0x09, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xda,
+	0x47, 0x0f, 0x01,
+@@ -8174,6 +8201,7 @@ err_close_lib:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1025, xtest_pkcs11_test_1025,
+		 "PKCS11: EDDSA key generation and signing");
++#endif
+
+ #define RSA_AES_MAX_KEY_SIZE 32
+
+@@ -8196,6 +8224,7 @@ ADBG_CASE_DEFINE(pkcs11, 1025, xtest_pkcs11_test_1025,
+
+ #define RSA_AES_WRAP_AES(_size) { .aes = { .size = (_size) } }
+
++#ifdef BUILD_FOR_OPTEE
+ static struct rsa_aes_wrap_test {
+	CK_KEY_TYPE target_type;
+	union {
+@@ -8737,6 +8766,7 @@ out_unsetenv:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1027, xtest_pkcs11_test_1027,
+		 "PKCS11: Login to PKCS#11 token with ACL based authentication");
++#endif
+
+ int xtest_pkcs11_1028_destroy_token_object(void)
+ {
+@@ -8809,6 +8839,7 @@ out_lib:
+  * process so that cryptoki library sees it as a different client and
+  * generates another handle for the same object.
+  */
++#ifdef BUILD_FOR_OPTEE
+ static void xtest_pkcs11_test_1028(ADBG_Case_t *c)
+ {
+	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+@@ -8871,3 +8902,4 @@ out_lib:
+ }
+ ADBG_CASE_DEFINE(pkcs11, 1028, xtest_pkcs11_test_1028,
+		 "PKCS11: destroy PKCS#11 objects handled by another session");
++#endif
+--
+2.34.1
+

@@ -1,0 +1,38 @@
+From eaff75d8dacaf438dd0cceaadbc071d4baa14af0 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Mon, 23 Jun 2025 10:34:16 -0500
+Subject: [PATCH 06/10] qmi error free fixup
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ src/mm-broadband-modem-qmi.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/mm-broadband-modem-qmi.c b/src/mm-broadband-modem-qmi.c
+index 76761c20..1a0040d8 100644
+--- a/src/mm-broadband-modem-qmi.c
++++ b/src/mm-broadband-modem-qmi.c
+@@ -8171,13 +8171,19 @@ load_messages_from_ta_storage (GTask *task)
+     GList                      *indexes, *l;
+     gchar                      *pdu;
+     MMSmsState                  state;
++    g_autoptr(GError)           read_error = NULL;
+ 
+     self = g_task_get_source_object (task);
+     ctx = g_task_get_task_data (task);
+     mm_obj_dbg (self, "load_messages_from_ta_storage");
+ 
+     /* read all indexes from storage */
+-    indexes = mm_sms_storage_read_all_indexes (&error);
++    indexes = mm_sms_storage_read_all_indexes (&read_error);
++    if (read_error) {
++        mm_obj_warn (self, "Failed to load SMS storage: %s", read_error->message);
++        return;
++    }
++
+     for (l = indexes; l; l = g_list_next (l)) {
+         guint              msg_index = GPOINTER_TO_UINT (l->data);
+         MMSmsPart         *part;
+-- 
+2.34.1
+

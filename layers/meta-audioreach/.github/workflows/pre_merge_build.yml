@@ -1,0 +1,76 @@
+---
+name: pre_merge_build
+run-name: Pre Merge Build ${{ github.event.pull_request.number != '' && github.event.pull_request.number || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      testplan:
+        description: 'Test plan name to use in job generation (lava-test-plans)'
+        required: false
+        type: string
+        default: 'pre-merge'
+  pull_request_target: # requiring access to base repo
+    types: [opened, synchronize, reopened]
+    branches:
+      - master
+    paths-ignore:
+      - '.github/**'
+
+jobs:
+  load_parameters:
+    uses: ./.github/workflows/loading.yml
+
+  flat_build:
+    needs: load_parameters
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      build_matrix: ${{ needs.load_parameters.outputs.build_matrix }}
+      build_type: flat_build  # Remove build_command since it's in the matrix now
+
+  filter_test_matrix:
+    needs: load_parameters
+    runs-on: ubuntu-latest
+    outputs:
+      test_matrix: ${{ steps.filter.outputs.test_matrix }}
+    steps:
+      - id: filter
+        shell: bash
+        run: |
+          MATRIX='${{ needs.load_parameters.outputs.build_matrix }}'
+          echo "RAW build_matrix:"
+          echo "$MATRIX"
+          echo "Validating JSON..."
+          echo "$MATRIX" | jq . >/dev/null
+
+          # Filter matrix and preserve build commands
+          FILTERED=$(
+            echo "$MATRIX" | jq -c '
+            if type == "object" then
+              to_entries
+              | map(select(.value.testing_enabled == true))
+              | from_entries
+            elif type == "array" then
+              map(select(.testing_enabled == true))
+            else
+              error("Unsupported build_matrix JSON type: " + (type|tostring))
+            end
+            '
+          )
+
+          echo "Filtered matrix (pretty):"
+          echo "$FILTERED" | jq .
+          echo "test_matrix=$FILTERED" >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: [load_parameters, flat_build, filter_test_matrix]
+    permissions:
+      checks: write
+      pull-requests: write
+    if: ${{ (success() || failure()) && !contains(needs.flat_build.result, 'skipped') }}
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+    with:
+      build_matrix: ${{ needs.filter_test_matrix.outputs.test_matrix }}
+      testplan: ${{ inputs.testplan != '' && inputs.testplan || 'pre-merge' }}

@@ -1,0 +1,224 @@
+From 7234411ec873496a850b80233b4ed6b17f5c3389 Mon Sep 17 00:00:00 2001
+From: Dan Williams <dan@ioncontrol.co>
+Date: Mon, 23 Jun 2025 15:55:07 -0500
+Subject: [PATCH 07/10] whitespace fixes; some memory leak fixes
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+---
+ src/mm-sms-storage.c | 86 ++++++++++++++++++++++----------------------
+ 1 file changed, 43 insertions(+), 43 deletions(-)
+
+diff --git a/src/mm-sms-storage.c b/src/mm-sms-storage.c
+index 67a2262d..297f0b66 100644
+--- a/src/mm-sms-storage.c
++++ b/src/mm-sms-storage.c
+@@ -37,6 +37,7 @@ mm_sms_storage_store_message (gchar *pdu, MMSmsState state, guint32 *idx, GError
+     g_autoptr(JsonParser) parser = NULL;
+     GError *inner_error = NULL;
+     guint msg_ref = 0;
++    g_autofree gchar *msg_ref_str = NULL;
+     g_autoptr(JsonNode) root = NULL;
+     JsonObject *root_object;
+     JsonObject *object = NULL;
+@@ -49,18 +50,17 @@ mm_sms_storage_store_message (gchar *pdu, MMSmsState state, guint32 *idx, GError
+     if (!json_parser_load_from_file (parser, dbname, &inner_error)) {
+         if (inner_error->code != G_FILE_ERROR_NOENT) {
+             g_propagate_prefixed_error (error, inner_error, "Unable to open JSON file:");
+-            *error = inner_error;
+             return FALSE;
+         }
+         g_clear_error (&inner_error);
+     } else {
+         root = json_parser_get_root (parser);
+-        if( JSON_NODE_TYPE (root) == JSON_NODE_OBJECT) {
++        if (JSON_NODE_TYPE (root) == JSON_NODE_OBJECT) {
+             no_data = FALSE;
+             reader = json_reader_new (root);
+             root_object = json_node_get_object (root);
+-            if(json_reader_read_member (reader, "msg_ref")) {
+-              msg_ref = json_reader_get_int_value (reader);
++            if (json_reader_read_member (reader, "msg_ref")) {
++                msg_ref = json_reader_get_int_value (reader);
+             }
+             json_reader_end_member (reader);
+         }
+@@ -76,7 +76,8 @@ mm_sms_storage_store_message (gchar *pdu, MMSmsState state, guint32 *idx, GError
+     object = json_object_new ();
+     json_object_set_string_member (object, "pdu", pdu);
+     json_object_set_int_member (object, "state", state);
+-    json_object_set_object_member (root_object, g_strdup_printf ("%u", msg_ref), object);
++    msg_ref_str = g_strdup_printf ("%u", msg_ref);
++    json_object_set_object_member (root_object, msg_ref_str, object);
+     json_node_take_object (root, root_object);
+ 
+     generator = json_generator_new ();
+@@ -97,13 +98,13 @@ mm_sms_storage_store_message (gchar *pdu, MMSmsState state, guint32 *idx, GError
+ gboolean
+ mm_sms_storage_delete_message (guint index, GError **error)
+ {
+-
+     g_autoptr(JsonParser) parser = NULL;
+     GError *inner_error = NULL;
+     g_autoptr(JsonNode) root = NULL;
+     JsonObject *root_object;
+     g_autoptr(JsonReader) reader = NULL;
+     g_autoptr(JsonGenerator) generator = NULL;
++    g_autofree gchar *msg_ref_str = NULL;
+ 
+     parser = json_parser_new ();
+ 
+@@ -115,10 +116,7 @@ mm_sms_storage_delete_message (guint index, GError **error)
+ 
+     root = json_parser_get_root (parser);
+ 
+-    if (JSON_NODE_TYPE (root) == JSON_NODE_OBJECT) {
+-        reader = json_reader_new (root);
+-        root_object = json_node_get_object (root);
+-    } else {
++    if (JSON_NODE_TYPE (root) != JSON_NODE_OBJECT) {
+         g_set_error (error,
+                      MM_CORE_ERROR,
+                      MM_CORE_ERROR_FAILED,
+@@ -126,8 +124,12 @@ mm_sms_storage_delete_message (guint index, GError **error)
+         return FALSE;
+     }
+ 
+-    //Delete message
+-    json_object_remove_member (root_object, g_strdup_printf ("%u", index));
++    reader = json_reader_new (root);
++    root_object = json_node_get_object (root);
++
++    // Delete message
++    msg_ref_str = g_strdup_printf ("%u", index);
++    json_object_remove_member (root_object, msg_ref_str);
+     generator = json_generator_new ();
+     json_generator_set_root (generator, root);
+ 
+@@ -150,6 +152,7 @@ mm_sms_storage_read_message (guint index, gchar **pdu, MMSmsState *state, GError
+     JsonObject *root_object;
+     g_autoptr(JsonReader) reader = NULL;
+     JsonNode *node = NULL;
++    g_autofree gchar *msg_ref_str = NULL;
+ 
+     parser = json_parser_new ();
+ 
+@@ -160,10 +163,7 @@ mm_sms_storage_read_message (guint index, gchar **pdu, MMSmsState *state, GError
+ 
+     root = json_parser_get_root (parser);
+ 
+-    if (JSON_NODE_TYPE (root) == JSON_NODE_OBJECT) {
+-        reader = json_reader_new (root);
+-        root_object = json_node_get_object (root);
+-    } else {
++    if (JSON_NODE_TYPE (root) != JSON_NODE_OBJECT) {
+         g_set_error (error,
+                      MM_CORE_ERROR,
+                      MM_CORE_ERROR_FAILED,
+@@ -171,8 +171,10 @@ mm_sms_storage_read_message (guint index, gchar **pdu, MMSmsState *state, GError
+         return FALSE;
+     }
+ 
+-    node = json_object_get_member (root_object, g_strdup_printf ("%u", index));
+-
++    reader = json_reader_new (root);
++    root_object = json_node_get_object (root);
++    msg_ref_str = g_strdup_printf ("%u", index);
++    node = json_object_get_member (root_object, msg_ref_str);
+     if (node) {
+         JsonObject *obj = json_node_get_object (node);
+         if (pdu)
+@@ -206,30 +208,24 @@ mm_sms_storage_read_all_indexes (GError **error)
+     }
+ 
+     root = json_parser_get_root (parser);
+-
+-    if (JSON_NODE_TYPE(root) == JSON_NODE_OBJECT) {
+-        reader = json_reader_new (root);
+-        root_object = json_node_get_object (root);
+-    } else {
+-        g_set_error (error,
+-                     MM_CORE_ERROR,
+-                     MM_CORE_ERROR_FAILED,
+-                     "No messages present in the DB");
++    if (JSON_NODE_TYPE (root) != JSON_NODE_OBJECT)
+         return NULL;
+-    }
+ 
++    reader = json_reader_new (root);
++    root_object = json_node_get_object (root);
+     memberNames = json_object_get_members (root_object);
+-
+     for (iter = memberNames; iter != NULL; iter = iter->next) {
+         const gchar *memberName = (const gchar *)iter->data;
++
+         msg_ref = g_ascii_strtoll (memberName, NULL, 10);
+         list = g_list_append (list, GUINT_TO_POINTER (msg_ref));
+     }
++    g_list_free (memberNames);
+ 
+     return list;
+ }
+ 
+-/* Store deafault_storage in local storage to persist across boot */
++/* Store default_storage in local storage to persist across boot */
+ gboolean
+ mm_sms_update_default_storage_type (MMSmsStorage storage, GError **error)
+ {
+@@ -272,7 +268,6 @@ mm_sms_update_default_storage_type (MMSmsStorage storage, GError **error)
+     // Write the data to Json
+     if (!json_generator_to_file (generator, dbname, &inner_error)) {
+         g_propagate_prefixed_error (error, inner_error, "DB write operation failed");
+-
+         return FALSE;
+     }
+ 
+@@ -284,29 +279,34 @@ mm_sms_get_default_storage_type (guint32 *storage, GError **error)
+ {
+     g_autoptr(JsonParser) parser = NULL;
+     GError *inner_error = NULL;
+-    guint storage_ref = 0; //Default value MM_SMS_STORAGE_UNKNOWN = 0
++    guint storage_ref = 0; // Default value MM_SMS_STORAGE_UNKNOWN = 0
+     g_autoptr(JsonNode) root = NULL;
+     g_autoptr(JsonReader) reader = NULL;
+ 
+     parser = json_parser_new ();
+ 
+     if (!json_parser_load_from_file (parser, dbname, &inner_error)) {
+-        g_object_unref (parser);
+         g_propagate_prefixed_error (error, inner_error, "Unable to open JSON file");
+         return FALSE;
+-    } else {
+-        root = json_parser_get_root (parser);
+-        if (JSON_NODE_TYPE(root) == JSON_NODE_OBJECT) {
+-            reader = json_reader_new (root);
++    }
+ 
+-            // read the member default_storage
+-            if (json_reader_read_member (reader, "default_storage")) {
+-                storage_ref = mm_common_get_sms_storage_from_string (json_reader_get_string_value (reader),
+-                                                                    NULL);
+-            }
+-            json_reader_end_member (reader);
++    root = json_parser_get_root (parser);
++    if (JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
++        *storage = MM_SMS_STORAGE_UNKNOWN;
++        return TRUE;
++    }
++
++    // read the member default_storage
++    reader = json_reader_new (root);
++    if (json_reader_read_member (reader, "default_storage")) {
++        storage_ref = mm_common_get_sms_storage_from_string (json_reader_get_string_value (reader),
++                                                             &inner_error);
++        if (inner_error) {
++            storage_ref = 0;
++            g_clear_error (&inner_error);
+         }
+     }
++    json_reader_end_member (reader);
+ 
+     *storage = storage_ref;
+     return TRUE;
+-- 
+2.34.1
+

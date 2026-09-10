@@ -1,0 +1,32 @@
+From 00eebb468fdf573c9c6a1bf88765e6dcb4165afb Mon Sep 17 00:00:00 2001
+From: Viswanath Kraleti <viswanath.kraleti@oss.qualcomm.com>
+Date: Fri, 13 Mar 2026 22:59:07 +0530
+Subject: [PATCH] utils: fix strrchr() conformance to C23
+
+ISO C23 specifies search functions such as strrchr() as generic,
+returning a const pointer when the input argument is const.
+Assigning this return value to a non-const pointer results in build
+errors with glibc 2.43 and above versions.
+
+Update utils_fileBasename() to use a const pointer for the strrchr()
+return value, restoring C23 conformance and fixing build issues.
+
+Signed-off-by: Viswanath Kraleti <viswanath.kraleti@oss.qualcomm.com>
+Upstream-Status: Pending
+---
+ src/utils.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/utils.c b/src/utils.c
+index 414679b..e22ec94 100644
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -216,7 +216,7 @@ void *utils_crealloc(void *ptr, size_t old_sz, size_t new_sz) {
+ }
+ 
+ char *utils_fileBasename(char const *path) {
+-  char *s = strrchr(path, '/');
++  const char *s = strrchr(path, '/');
+   if (!s) {
+     return strdup(path);
+   } else {

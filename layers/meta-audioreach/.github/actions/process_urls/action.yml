@@ -1,0 +1,120 @@
+---
+name: Process URLs
+description: Process presigned URLs to extract specific file URLs
+
+outputs:
+  filename:
+    description: The filename of the common tar.gz file
+    value: ${{ steps.process_urls.outputs.filename }}
+  flat_build_url:
+    description: Pre-signed URL for the common tar.gz file
+    value: ${{ steps.process_urls.outputs.flat_build_url }}
+
+runs:
+  using: "composite"
+  steps:
+    # Normalize ARTIFACT_KEY to basename without .yml
+    - name: Normalize ARTIFACT_KEY
+      shell: bash
+      run: |
+        set -e
+        base="$(basename "${ARTIFACT_KEY}" .yml)"
+        echo "ARTIFACT_KEY_BASENAME=${base}" >> "$GITHUB_ENV"
+        echo "Normalized ARTIFACT_KEY to: ${base}"
+
+    # Download artifact into a deterministic folder
+    - name: Download Presigned URL list
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ env.MACHINE }}_flat_build_${{ env.ARTIFACT_KEY_BASENAME }}_presigned_urls.json
+        path: ${{ github.workspace }}/_artifacts
+
+    # Extract + find the JSON safely
+    - name: Process Presigned URLs
+      id: process_urls
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const p = require('path');
+          const workspace = process.env.GITHUB_WORKSPACE;
+          const machine = process.env.MACHINE;
+          const artifactKey = p.basename(process.env.ARTIFACT_KEY || '', '.yml');
+          const jsonName = `${machine}_flat_build_${artifactKey}_presigned_urls.json`;
+
+          // Candidate file paths
+          const candidates = [
+            p.join(workspace, '_artifacts', jsonName),
+            p.join(workspace, '_artifacts', jsonName, jsonName),
+          ];
+
+          // Recursive fallback search
+          function findRecursively(dir, target) {
+            if (!fs.existsSync(dir)) return null;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const e of entries) {
+              const full = p.join(dir, e.name);
+              if (e.isDirectory()) {
+                const found = findRecursively(full, target);
+                if (found) return found;
+              } else if (e.isFile() && e.name === target) {
+                return full;
+              }
+            }
+            return null;
+          }
+
+          // Try direct candidates
+          let filePath = candidates.find(f => fs.existsSync(f));
+
+          // Try recursive match if not found
+          if (!filePath) {
+            filePath = findRecursively(p.join(workspace, '_artifacts'), jsonName);
+          }
+
+          if (!filePath) {
+            core.setFailed(
+              `Presigned URL JSON not found.\n` +
+              `Expected: ${jsonName}\n` +
+              `Searched paths:\n- ${candidates.join('\n- ')}`
+            );
+            return;
+          }
+
+          console.log(`Found presigned URLs file: ${filePath}`);
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          let flat_build_url = "";
+          let flat_build_vision = "";
+          let script_file_url = "";
+          let filename = "";
+
+          // Process URLs based on machine type and file extensions
+          for (const [pathStr, url] of Object.entries(data)) {
+            if (machine === 'raspberrypi4') {
+              // For Raspberry Pi
+              if (pathStr.endsWith('.tar.bz2')) {
+                flat_build_url = url;
+                filename = pathStr;
+              } else if (pathStr.endsWith('.sh')) {
+                // Handle SDK for RPi
+                script_file_url = url;
+              }
+            } else {
+              // For QCOM devices
+              if (pathStr.endsWith('.tar.gz')) {
+                if (pathStr.includes('vision')) {
+                  flat_build_vision = url;
+                } else {
+                  flat_build_url = url;
+                  filename = pathStr;
+                }
+              } else if (pathStr.endsWith('.sh')) {
+                script_file_url = url;
+              }
+            }
+          }
+
+          core.setOutput('flat_build_vision', flat_build_vision);
+          core.setOutput('script_file_url', script_file_url);
+          core.setOutput('flat_build_url', flat_build_url);
+          core.setOutput('filename', filename);

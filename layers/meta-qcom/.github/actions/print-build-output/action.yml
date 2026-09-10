@@ -1,0 +1,82 @@
+name: Print a table of build output for the summary page
+inputs:
+  pattern:
+    description: File pattern to download
+    required: true
+  github-token:
+    description: "Github token. It's required to download artifacts from the workflow"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: 'Download build URLs'
+      uses: actions/download-artifact@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        pattern: ${{ inputs.pattern }}
+        path: urlfiles
+        merge-multiple: true
+
+    - name: Detect whether any artifacts were downloaded
+      id: has_artifacts
+      shell: bash
+      run: |
+        if [ -d "urlfiles" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+        else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: "Print output"
+      if: steps.has_artifacts.outputs.found == 'true'
+      shell: python
+      id: print-output
+      run: |
+        import os
+        ftable = {}
+        oslist = set()
+        machinelist = set()
+        for fname in os.listdir("./urlfiles"):
+            if fname.startswith("build-url"):
+                b, m, o = fname.split("_", 2)
+                oslist.add(o)
+                machinelist.add(m)
+                url = ""
+                with open(f"./urlfiles/{fname}", "r") as urlfile:
+                    url = urlfile.read()
+                if not o in ftable:
+                    ftable.update({o:{m: url}})
+                else:
+                    ftable[o].update({m: url})
+
+        table_str = "| |"
+
+        for m in sorted(machinelist):
+            table_str += f" {m} |"
+
+        table_str += "\n|"
+        for i in range(len(machinelist) + 1):
+            table_str += " ---- |"
+
+        table_str += "\n"
+
+        for o in sorted(ftable.keys()):
+            table_str += f"| {o} |"
+            for m in sorted(machinelist):
+                url = ftable[o].get(m)
+                if url:
+                    url = url.strip()
+                    table_str += f" [Files]({url}/{o}/{m}/) |"
+                else:
+                    table_str += " |"
+            table_str += "\n"
+        summary_file_name = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_file_name:
+            with open(summary_file_name, "a") as summaryfile:
+                summaryfile.write("<summary>Download URLs</summary>\n")
+                summaryfile.write("<details>\n\n")
+                summaryfile.write(table_str)
+                summaryfile.write("</details>")
+        print(table_str)
+

@@ -1,0 +1,73 @@
+From 672beb9e6ceba7e36fef7d25d700192567af1064 Mon Sep 17 00:00:00 2001
+From: Akula Susmitha <quic_asusmith@quicinc.com>
+Date: Tue, 28 Oct 2025 18:18:00 +0530
+Subject: [PATCH 10/10] sms-storage: Add slot info for TA SMS in DB
+
+Upstream-Status: Submitted [https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/merge_requests/1263]
+Signed-off-by: Akula Susmitha <quic_asusmith@quicinc.com>
+---
+ src/mm-sms-qmi.c     | 3 ++-
+ src/mm-sms-storage.c | 5 ++++-
+ src/mm-sms-storage.h | 3 ++-
+ 3 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/src/mm-sms-qmi.c b/src/mm-sms-qmi.c
+index 81120e8b..fa112567 100644
+--- a/src/mm-sms-qmi.c
++++ b/src/mm-sms-qmi.c
+@@ -250,11 +250,12 @@ sms_store_next_part (GTask *task)
+         guint32     idx;
+         MMSmsState  state;
+         GList      *parts;
++        guint32    slot_id = 0; // currently default slot_id is 0
+ 
+         mm_obj_dbg (self, "sms_store_next_part, storing in TA");
+         state = mm_gdbus_sms_get_state (MM_GDBUS_SMS (self));
+ 
+-        if (!mm_sms_storage_store_message (pdu, pdulen, state, &idx, &error)) {
++        if (!mm_sms_storage_store_message (pdu, pdulen, state, slot_id, &idx, &error)) {
+             g_task_return_error (task, error);
+             g_object_unref (task);
+             return;
+diff --git a/src/mm-sms-storage.c b/src/mm-sms-storage.c
+index bdd9361d..24bf1916 100644
+--- a/src/mm-sms-storage.c
++++ b/src/mm-sms-storage.c
+@@ -35,8 +35,9 @@ gboolean
+ mm_sms_storage_store_message (const guint8  *pdu,
+                               gsize          pdu_len,
+                               MMSmsState     state,
++                              guint32        slot_id,
+                               guint32       *idx,
+-                              GError       **error)
++                              GError        **error)
+ {
+     g_autoptr(JsonParser)    parser = NULL;
+     GError                  *inner_error = NULL;
+@@ -85,6 +86,8 @@ mm_sms_storage_store_message (const guint8  *pdu,
+     hexpdu = mm_utils_bin2hexstr (pdu, pdu_len);
+     json_object_set_string_member (object, "pdu", hexpdu);
+ 
++    json_object_set_int_member (object, "slot_id", slot_id);
++
+     msg_ref_str = g_strdup_printf ("%u", msg_ref);
+     json_object_set_object_member (root_object, msg_ref_str, object);
+ 
+diff --git a/src/mm-sms-storage.h b/src/mm-sms-storage.h
+index d2bb22d4..a2b49515 100644
+--- a/src/mm-sms-storage.h
++++ b/src/mm-sms-storage.h
+@@ -23,8 +23,9 @@
+ gboolean     mm_sms_storage_store_message       (const guint8  *pdu,
+                                                  gsize          pdu_len,
+                                                  MMSmsState     state,
++                                                 guint32        slot_id,
+                                                  guint32       *idx,
+-                                                 GError       **error);
++                                                 GError        **error);
+ 
+ gboolean     mm_sms_storage_delete_message      (guint    index,
+                                                  GError **error);
+-- 
+2.34.1
+

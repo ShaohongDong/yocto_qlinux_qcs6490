@@ -1,0 +1,27 @@
+# BitBake build output and caches
+/tmp/
+/cache/
+/downloads/
+/sstate-cache/
+/buildhistory/
+
+# devtool workspace and BitBake runtime files
+/workspace/
+/bitbake-cookerdaemon.log
+/bitbake.lock
+/bitbake.sock
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and operating-system files
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/siemens/kas/master/kas/schema-kas.json
+# This fragment should be used in a clean DL_DIR running all the bitbake fetch tasks
+# bitbake --runall fetch world
+
+header:
+  version: 14
+
+local_conf_header:
+  download_mirror_disable: |
+    INHERIT:remove = "qli-mirrors"
