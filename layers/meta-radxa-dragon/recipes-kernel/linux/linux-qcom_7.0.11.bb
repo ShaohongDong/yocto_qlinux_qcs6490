@@ -31,6 +31,7 @@ SRC_URI = " \
     git://github.com/radxa/kernel.git;branch=${SRCBRANCH};protocol=https \
     file://0001-feat-Radxa-common-kernel-config.patch;striplevel=2 \
     file://0002-feat-Radxa-custom-kernel-config.patch;striplevel=2 \
+    file://0003-q6a-pmic-gpio-default.patch \
 "
 
 S = "${UNPACKDIR}/${BP}"

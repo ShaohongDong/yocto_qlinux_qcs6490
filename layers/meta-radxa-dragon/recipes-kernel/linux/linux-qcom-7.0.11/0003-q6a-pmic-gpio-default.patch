@@ -1,0 +1,43 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] arm64: dts: qcom: fix Dragon Q6A VADC pinctrl
+
+Avoid the firmware-owned GPIO7 power-source write rejected by the SPMI
+arbiter. Configure the UFS thermistor GPIO2 when the VADC probes instead.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+---
+--- a/arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts
++++ b/arch/arm64/boot/dts/qcom/qcs6490-radxa-dragon-q6a.dts
+@@ -645,8 +645,6 @@
+ };
+ 
+ &pm7325_gpios {
+-	pinctrl-0 = <&hardware_version_sel>;
+-	pinctrl-names = "default";
+ 	gpio-line-names = "",	/* GPIO_01 */
+ 			  "UFS_THERM",
+ 			  "Version_ADC",
+@@ -658,11 +656,10 @@
+ 			  "MICRO USB DET",
+ 			  "";
+ 
+-	hardware_version_sel: hardware-version-sel-state {
+-		pins = "gpio7";
++	pm7325_adc_default: adc-default-state {
++		pins = "gpio2";
+ 		function = PMIC_GPIO_FUNC_NORMAL;
+ 		bias-high-impedance;
+-		power-source = <1>;
+ 	};
+ };
+ 
+@@ -704,6 +701,8 @@
+ };
+ 
+ &pmk8350_vadc {
++	pinctrl-0 = <&pm7325_adc_default>;
++	pinctrl-names = "default";
+ 	channel@3 {
+ 		reg = <PMK8350_ADC7_DIE_TEMP>;
+ 		label = "pmk7325_die_temp";
