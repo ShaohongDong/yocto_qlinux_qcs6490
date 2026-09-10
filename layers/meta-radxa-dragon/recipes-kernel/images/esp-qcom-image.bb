@@ -19,11 +19,13 @@ KERNEL_DEVICETREE:glymur-crd = "${QCOM_DTB_DEFAULT}.dtb"
 KERNEL_DEVICETREE:kaanapali-mtp = "${QCOM_DTB_DEFAULT}.dtb"
 KERNEL_DEVICETREE:sm8750-mtp = "${QCOM_DTB_DEFAULT}.dtb"
 
-# The Q6A firmware supplies a DTB too, but the Q6A image intentionally carries
-# the dedicated Dragon Q6A DTB in the UKI. A standalone copy is also placed
-# in the ESP.
+# The Radxa firmware supplies a DTB too, but these images intentionally carry
+# the dedicated board DTB that was built with the kernel. A standalone copy is
+# also placed in the ESP.
 UKI_DEVICETREE:radxa-dragon-q6a = "qcom/qcs6490-radxa-dragon-q6a.dtb"
 UKI_ESP_DEVICETREE:radxa-dragon-q6a = "${UKI_DEVICETREE}"
+UKI_DEVICETREE:radxa-dragon-q8b = "qcom/sc8280xp-radxa-dragon-q8b.dtb"
+UKI_ESP_DEVICETREE:radxa-dragon-q8b = "${UKI_DEVICETREE}"
 
 setup_efi_folder() {
     # Move EFI content from packages expecting /boot to be the ESP location

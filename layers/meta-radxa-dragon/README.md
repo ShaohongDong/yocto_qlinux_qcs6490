@@ -50,6 +50,14 @@ for the implementation details.
 
 See `conf/machine` for the complete list of supported devices.
 
+Radxa-specific EFI machines provided by this vendored layer include:
+
+- `radxa-dragon-q6a` (QCS6490)
+- `radxa-dragon-q8b` (SC8280XP)
+
+Both Radxa machines use the pinned Radxa `linux-qcom` 7.0.11-6 kernel. They are
+intentionally incompatible with this layer's older 6.18 recipe.
+
 ## Generic machine support
 
 All contemporary boards are supported by a single qcom-armv8a machine. It can be

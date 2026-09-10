@@ -12,6 +12,7 @@ PACKAGES = " \
     ${PN}-qcom-qcs6490-soc \
     ${PN}-qcom-qcs8300-soc \
     ${PN}-qcom-qcs9100-soc \
+    ${PN}-qcom-sc8280xp-soc \
     ${PN}-qcom-shikra-soc \
 "
 
@@ -211,6 +212,15 @@ RRECOMMENDS:${PN}-qcom-qcs9100-soc += " \
     kernel-module-pwrseq-qcom-wcn \
     kernel-module-stmmac-platform \
     kernel-module-videocc-sa8775p \
+"
+
+# Radxa's SC8280XP kernel deliberately keeps a broad module set. Pulling the
+# generated module metapackage here prevents a functional board driver from
+# being omitted by an incomplete hand-maintained list.
+RRECOMMENDS:${PN}-qcom-sc8280xp-soc += " \
+    ${PN}-board-generic \
+    ${PN}-qcom-generic \
+    kernel-modules \
 "
 
 RRECOMMENDS:${PN}-qcom-shikra-soc += " \

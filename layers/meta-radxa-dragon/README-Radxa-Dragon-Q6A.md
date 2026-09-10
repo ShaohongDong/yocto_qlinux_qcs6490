@@ -3,6 +3,9 @@
 This guide builds the EFI-based Yocto images for the Radxa Dragon Q6A and writes
 them to a microSD card or UFS module.
 
+The machine is pinned to Radxa `linux-qcom` 7.0.11-6. There is no Q6A fallback
+to the layer's 6.18 recipe; rebuild external kernel modules after upgrading.
+
 > The Q6A boots from the Qualcomm boot chain and UEFI stored in SPI NOR. The
 > images produced here start at the EFI System Partition; they do not contain a
 > qcomflash boot-firmware payload.

@@ -7,6 +7,8 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=6bc538ed5bd9a7fc9398086aedcd7e46"
 inherit kernel cml1
 
 COMPATIBLE_MACHINE = "(qcom)"
+COMPATIBLE_MACHINE:radxa-dragon-q6a = "^$"
+COMPATIBLE_MACHINE:radxa-dragon-q8b = "^$"
 
 LINUX_QCOM_FIT_DTB_COMPATIBLE = "conf/machine/include/fit-dtb-compatible-linux-qcom.inc"
 
@@ -34,7 +36,6 @@ SRC_URI = " \
     file://0003-arm64-dts-qcom-x1e78100-lenovo-thinkpad-t14s-add-HDM.patch \
     file://0004-scsi-ufs-qcom-Add-support-for-UFS-module-detection.patch \
     file://0005-ufs-qcom-add-PA_TACTIVATE-quirk-for-Kioxia-THGJFGT1E.patch \
-    file://0006-arm64-dts-qcom-qcs6490-Add-Radxa-Dragon-Q6A.patch \
 "
 
 # Additional kernel configs.
