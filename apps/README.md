@@ -28,6 +28,11 @@ scripts/qcom-app all --app example --machine radxa-dragon-q6a
 list. The wrapper passes selection through a temporary BitBake post-config and
 does not rewrite `conf/local.conf`.
 
+For `imx708-camera` on Q6A only, `image` and `all` accept
+`--allow-incomplete-camera` to package an explicitly marked development image
+while sensor integration is incomplete. Without it the image remains blocked.
+This does not establish physical camera functionality.
+
 ## Manifest contract
 
 The schema is strict and currently fixed at version 1:

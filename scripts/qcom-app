@@ -65,6 +65,8 @@ def _run_bitbake(args, targets: list[str], image: str) -> int:
         f'MACHINE = "{args.machine}"\n'
         f'QCOM_APP_IMAGE = "{image}"\n'
     )
+    if getattr(args, "allow_incomplete_camera", False):
+        config += 'QCOM_IMX708_ALLOW_INCOMPLETE = "1"\n'
     with tempfile.NamedTemporaryFile("w", prefix="qcom-app-", suffix=".conf") as postfile:
         postfile.write(config)
         postfile.flush()
@@ -88,9 +90,17 @@ def main() -> int:
     for action in ("image", "all"):
         command = subparsers.add_parser(action, help=f"build the selected application's {action} target")
         _add_selection_arguments(command, image=True)
+        command.add_argument(
+            "--allow-incomplete-camera", action="store_true",
+            help="build an IMX708 Q6A development image without completed sensor integration",
+        )
     args = parser.parse_args()
 
     try:
+        if getattr(args, "allow_incomplete_camera", False) and (
+            args.app != "imx708-camera" or args.machine != "radxa-dragon-q6a"
+        ):
+            raise ManifestError("--allow-incomplete-camera requires imx708-camera on radxa-dragon-q6a")
         if args.action == "list":
             for spec in discover_apps(APPS):
                 print(f"{spec.name}\t{spec.build['system']}\t{','.join(sorted(spec.machines))}\t{spec.summary}")

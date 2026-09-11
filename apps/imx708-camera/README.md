@@ -22,8 +22,18 @@ scripts/qcom-app build --app imx708-camera --machine radxa-dragon-q6a
 ```
 
 `image` selects `qcom-multimedia-proprietary-efi-sd-image`; UFS 4K is also
-explicitly allowed by the manifest. Both image builds currently fail at
-`do_imx708_support_check` with the missing integration requirements. Client
+explicitly allowed by the manifest. By default both image builds fail at
+`do_imx708_support_check` with the missing integration requirements. To package
+the application and its dependencies in a Q6A development SD image, run:
+
+```sh
+scripts/qcom-app image --app imx708-camera --machine radxa-dragon-q6a \
+  --allow-incomplete-camera
+```
+
+This explicit option warns about incomplete integration and installs
+`/etc/imx708-camera-development`. It does not enable real IMX708 capture or
+install candidate CHI, tuning or device-tree assets. Client
 and register-core builds remain available. The existing kernel contains `imx708.ko` and CAMSS;
 neither alone connects an IMX708 to the proprietary ISP. No guessed kernel
 patches, device tree, sensor binaries or copied IMX577 tuning are installed.
