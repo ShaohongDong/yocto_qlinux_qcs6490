@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: imx708-camera
+summary: Q6A CAM3 IMX708 CamX camera application (sensor integration pending)
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+inputs:
+- LICENSE
+- README.md
+- CMakeLists.txt
+- src
+- data
+- docs
+- tests
+- scripts
+- kernel
+build:
+  system: cmake
+  source: .
+  options:
+  - -DIMX708_WITH_QMMF=ON
+  - -DBUILD_TESTING=OFF
+check: [/usr/bin/imx708-camera, --self-test]
+dependencies:
+  build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base, camera-service]
+  runtime:
+  - imx708-sensor-core
+  - ttf-wqy-zenhei
+  - camera-service
+  - camxlib-kodiak
+  - camxfirmware-kodiak
+  - camx-dlkm
+  - gst-plugins-imsdk-prop-qticamsrc
+  - gstreamer1.0-plugins-good-gtk
+  - gstreamer1.0-plugins-good-video4linux2
+  - gstreamer1.0-plugins-good-isomp4
+  - gstreamer1.0-plugins-bad-videoparsersbad
+  - gstreamer1.0-plugins-base-videoconvertscale
+  - gstreamer1.0-plugins-base-app
+machines:
+  radxa-dragon-q6a:
+    kernel_providers: [linux-qcom]
+    images:
+      default: qcom-multimedia-proprietary-efi-sd-image
+      allowed:
+      - qcom-multimedia-proprietary-efi-sd-image
+      - qcom-multimedia-proprietary-efi-ufs-4k-image
+# The native imx708.ko is already present. CamX needs different sensor/module
+# assets and board DT bindings; see docs/bringup.md. Do not install guessed DT.
+kernel:
+  config: []
+  patches: []
+  device_tree: {files: [], patches: []}
+  modules: []
+services: []

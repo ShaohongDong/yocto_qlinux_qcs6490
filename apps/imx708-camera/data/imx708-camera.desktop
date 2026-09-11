@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=IMX708 Camera
+Name[zh_CN]=IMX708 相机
+Comment=Q6A CAM3 camera preview, photos and recording
+Exec=imx708-camera
+Icon=camera-photo
+Terminal=false
+Categories=AudioVideo;Video;

@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: MIT
+// CAM3 transport/sensor candidate, compiled against the actual Q6A board DTS.
+// Source mapping: MiCode yupik-camera.dtsi dc1fbbeea69a4cba247387c9654489c4291d75e6.
+// This file is NOT selected by app.yaml. CRM/CPAS/IFE/SMMU/ISP integration remains.
+// Keep nodes disabled until the full CamX platform is integrated.
+
+&camss {
+	status = "disabled";
+};
+
+&cci1 {
+	compatible = "qcom,cci", "simple-bus";
+	cell-index = <1>;
+	reg-names = "cci";
+	reg-cam-base = <0x4b000>;
+	interrupt-names = "cci";
+	// Retain the native 64-bit reg/interrupt and genpd references.
+	clocks = <&camcc CAM_CC_CCI_1_CLK_SRC>, <&camcc CAM_CC_CCI_1_CLK>;
+	clock-names = "cci_1_clk_src", "cci_1_clk";
+	src-clock-name = "cci_1_clk_src";
+	clock-cntl-level = "lowsvs";
+	clock-rates = <37500000 0>;
+	pinctrl-names = "cam_default", "cam_suspend";
+	pinctrl-0 = <&cci3_default>;
+	pinctrl-1 = <&cci3_sleep>;
+	gpios = <&tlmm 75 0>, <&tlmm 76 0>;
+	gpio-req-tbl-num = <0 1>;
+	gpio-req-tbl-flags = <1 1>;
+	gpio-req-tbl-label = "CCI_I2C_DATA3", "CCI_I2C_CLK3";
+	status = "disabled";
+
+	qcom,i2c_standard_mode {
+		hw-thigh = <201>; hw-tlow = <174>;
+		hw-tsu-sto = <204>; hw-tsu-sta = <231>;
+		hw-thd-dat = <22>; hw-thd-sta = <162>; hw-tbuf = <227>;
+		hw-scl-stretch-en = <0>; hw-trdhld = <6>; hw-tsp = <3>;
+		cci-clk-src = <37500000>;
+	};
+	qcom,i2c_fast_mode {
+		hw-thigh = <38>; hw-tlow = <56>;
+		hw-tsu-sto = <40>; hw-tsu-sta = <40>;
+		hw-thd-dat = <22>; hw-thd-sta = <35>; hw-tbuf = <62>;
+		hw-scl-stretch-en = <0>; hw-trdhld = <6>; hw-tsp = <3>;
+		cci-clk-src = <37500000>;
+	};
+
+	cam3_dw9817: actuator-cam3 {
+		compatible = "qcom,actuator";
+		cell-index = <0>;
+		cci-master = <1>;
+		cam_vaf-supply = <&vcc_3v3>;
+		regulator-names = "cam_vaf";
+		status = "disabled";
+	};
+
+	cam3_imx708: sensor-cam3 {
+		compatible = "qcom,cam-sensor";
+		// Slot 0 matches the generated reference module XML; it is not camera=3.
+		cell-index = <0>;
+		cci-master = <1>;
+		csiphy-sd-index = <3>;
+		actuator-src = <&cam3_dw9817>;
+		pinctrl-names = "cam_default", "cam_suspend";
+		pinctrl-0 = <&cam3_enable_default>;
+		pinctrl-1 = <&cam3_enable_sleep>;
+		gpios = <&tlmm 78 0>;
+		gpio-reset = <0>;
+		gpio-req-tbl-num = <0>;
+		gpio-req-tbl-flags = <0>;
+		gpio-req-tbl-label = "CAM3_MODULE_ENABLE";
+		// 24 MHz comes from the module oscillator; no SoC MCLK is requested.
+		status = "disabled";
+	};
+};
+
+&tlmm {
+	cam3_enable_default: cam3-enable-default-state {
+		pins = "gpio78";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+	cam3_enable_sleep: cam3-enable-sleep-state {
+		pins = "gpio78";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+};
+
+&soc {
+	cam3_csiphy: csiphy@ace6000 {
+		compatible = "qcom,csiphy-v1.2.1", "qcom,csiphy";
+		cell-index = <3>;
+		reg = <0 0x0ace6000 0 0x2000>;
+		reg-names = "csiphy";
+		reg-cam-base = <0xe6000>;
+		interrupts = <GIC_SPI 448 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "csiphy3";
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
+		refgen-supply = <&refgen>;
+		csi-vdd-1p2-supply = <&vreg_l6b_1p2>;
+		csi-vdd-0p9-supply = <&vreg_l10c_0p88>;
+		regulator-names = "refgen", "csi-vdd-1p2", "csi-vdd-0p9";
+		rgltr-cntrl-support;
+		rgltr-min-voltage = <0 1200000 880000>;
+		rgltr-max-voltage = <0 1260000 1050000>;
+		rgltr-load-current = <0 54000 96400>;
+		clocks = <&camcc CAM_CC_CPHY_RX_CLK_SRC>, <&camcc CAM_CC_CSIPHY3_CLK>,
+			 <&camcc CAM_CC_CSI3PHYTIMER_CLK_SRC>, <&camcc CAM_CC_CSI3PHYTIMER_CLK>;
+		clock-names = "cphy_rx_clk_src", "csiphy3_clk", "csi3phytimer_clk_src", "csi3phytimer_clk";
+		src-clock-name = "csi3phytimer_clk_src";
+		clock-cntl-level = "lowsvs", "svs";
+		clock-rates = <300000000 0 300000000 0>, <400000000 0 300000000 0>;
+		status = "disabled";
+	};
+};

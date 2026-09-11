@@ -1,0 +1,14 @@
+{
+  "repo": "comprehensive9/vendor_qcom_proprietary",
+  "commit": "36fc163a534963a5b3af52186af5efcc63401ad2",
+  "files": {
+    "api/common/camxcdktypes.h": "2cc8d558fb010e55ee339ba0d4dde98ac76d3bc9b28e41b3aa03132322ea3b3e",
+    "api/sensor/camxsensordriverapi.h": "bddbca31c670b79ef936ead193ce02228da1fffe6452528c26d0efa204b54ab6",
+    "api/sensor/camxsensorcommon.xsd": "e22f3e6ab3c54228110cc4e286814081d2b4242e2da90ef4ee2d447c86f2356f",
+    "api/sensor/camxsensordriver.xsd": "38667aab952558c3678ee3a8125941d3d32ee11fa38d679e9e2611723a4abad5",
+    "api/sensor/camxmoduleconfig.xsd": "24b813ae3cf1d942e41828854e6bdc83b3b4c689c0fc536138ce72de72cfb690",
+    "api/sensor/camxactuatordriver.xsd": "44239db268e3186b9684ac23f367eb9eaaa8635580039c69e7667bc978b79aa9",
+    "tools/buildbins/linux64/ParameterParserGCC7": "1aa4632f585cfcd939f61e34b6c820e7423020af9eacc5120272ed929363dbc5",
+    "oem/qcom/sensor/imx577/imx577_sensor.xml": "dab5c52ce633ba8224c037fc7d57b6502c13302f41ac74cd76aabd9ca3ea1bab"
+  }
+}
