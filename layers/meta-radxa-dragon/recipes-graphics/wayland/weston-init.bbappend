@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
 
 DEFAULTBACKEND:qcom ?= "drm"
@@ -23,3 +24,14 @@ do_install:append:qcom() {
 
 FILES:${PN} += "${systemd_system_unitdir}/weston.service.d/additional-devices.conf"
 FILES:${PN} += "${bindir}/weston-start.sh"
+
+do_install:append:radxa-dragon-q6a() {
+    # The tested HDMI sink corrupts 10-bpc output although its EDID advertises
+    # deep color. Keep GPU rendering and EDID mode selection, but use 8 bpc.
+    cat >> ${D}${sysconfdir}/xdg/weston/weston.ini <<'EOF'
+
+[output]
+name=HDMI-A-1
+max-bpc=8
+EOF
+}
