@@ -17,8 +17,8 @@ CORE_IMAGE_BASE_INSTALL += " \
     zram \
 "
 
-# Default root password: oelinux123
-EXTRA_USERS_PARAMS = "usermod -p '\$6\$UDMimfYF\$akpHo9mLD4z0vQyKzYxYbsdYxnpUD7B7rHskq1E3zXK8ygxzq719wMxI78i0TIIE0NB1jUToeeFzWXVpBBjR8.' root;"
+# Default login: root / root
+EXTRA_USERS_PARAMS = "usermod -p '\$6\$tXF5X5uFywp.Hu3M\$rTiGtPmTMba9io9PZEfQggLzszRPO7IatCYcrrFS.grLBMrBXGD9NlswdbEID2/46xs.IIXmESc3F28oo0KvG.' root;"
 
 # Adding kernel-devsrc to provide kernel development support on SDK
 TOOLCHAIN_TARGET_TASK += "kernel-devsrc"
