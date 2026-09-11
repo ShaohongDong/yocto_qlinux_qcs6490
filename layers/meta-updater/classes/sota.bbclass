@@ -5,7 +5,8 @@ SOTA_DEPLOY_CREDENTIALS ?= "1"
 SOTA_HARDWARE_ID ??= "${MACHINE}"
 
 IMAGE_CLASSES += " image_types_ostree image_types_ota image_repo_manifest"
-IMAGE_INSTALL:append:sota = " aktualizr aktualizr-info ${SOTA_CLIENT_PROV} \
+SOTA_CLIENT_PACKAGES ??= "aktualizr aktualizr-info ${SOTA_CLIENT_PROV}"
+IMAGE_INSTALL:append:sota = " ${SOTA_CLIENT_PACKAGES} \
                               ostree os-release ostree-kernel ostree-initramfs \
                               ${@'ostree-devicetrees' if oe.types.boolean('${OSTREE_DEPLOY_DEVICETREE}') else ''}"
 

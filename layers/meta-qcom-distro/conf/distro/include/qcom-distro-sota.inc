@@ -1,11 +1,4 @@
-require conf/distro/sota.conf.inc
-
-INITRAMFS_IMAGE = "initramfs-ostree-image"
-
+# SPDX-License-Identifier: MIT
+# Compatibility name; qcom-base.inc now enables OTA for every QCOM distro.
+QCOM_OTA_ENABLE = "1"
 DISTRO_NAME:append = " (OTA-enabled)"
-
-# ptest is not generally useful with ostree-based images (ro /usr)
-DISTRO_FEATURES_OPTED_OUT += "ptest"
-
-# Generate an OSTree repository tarball during image build
-BUILD_OSTREE_REPO_TARBALL = "1"

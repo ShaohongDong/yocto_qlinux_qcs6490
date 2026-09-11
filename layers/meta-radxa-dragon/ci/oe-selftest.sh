@@ -81,4 +81,7 @@ if [ -n "$DL_DIR" ]; then
     echo "DL_DIR = \"$DL_DIR\"" >> conf/local.conf
 fi
 
-oe-selftest --run-tests "$TEST_CASES"
+# Each discovered module is a separate oe-selftest selection argument.
+set -f
+set -- $TEST_CASES
+oe-selftest --run-tests "$@"

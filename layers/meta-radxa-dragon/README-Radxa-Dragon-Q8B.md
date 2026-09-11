@@ -1,5 +1,11 @@
 # Radxa Dragon Q8B Yocto Usage Guide
 
+OTA is enabled by default for `qcom-distro`. See [OTA operation and release
+instructions](README-OTA.md). OTA images use versioned OSTree UKIs and mount
+their ESP at `/boot`. The standalone ESP/UKI layout below applies when
+`QCOM_OTA_ENABLE = "0"` is explicitly selected. The board audit detects both
+layouts from the generated artifacts.
+
 This guide builds EFI-based Yocto images for the Radxa Dragon Q8B (SC8280XP).
 The machine uses Radxa `linux-qcom` 7.0.11-6, Radxa firmware 0.2.41 and the
 260825 SPI NOR BIOS recovery release. It has no fallback to Linux 6.18.

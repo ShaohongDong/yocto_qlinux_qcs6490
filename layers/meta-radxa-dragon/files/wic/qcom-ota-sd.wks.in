@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# OTA ESP is mounted at /boot by the deployed fstab, not by WIC.
+part --source rawcopy --sourceparams="file=${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.ota-esp" --fstype=vfat --active --align 4096 --fixed-size 512M --part-name ESP --part-type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+part --source rawcopy --sourceparams="file=${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.ota-ext4" --fstype=ext4 --align 4096 --part-name rootfs --part-type=0FC63DAF-8483-4772-8E79-3D69D8477DE4
+bootloader --ptable gpt

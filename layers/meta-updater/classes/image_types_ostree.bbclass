@@ -9,6 +9,7 @@ PSEUDO_INCLUDE_PATHS .= ",${OSTREE_ROOTFS}"
 OSTREE_COMMIT_SUBJECT ??= "Commit-id: ${IMAGE_NAME}"
 OSTREE_COMMIT_BODY ??= ""
 OSTREE_COMMIT_VERSION ??= "${DISTRO_VERSION}"
+OSTREE_COMMIT_SKIP_IF_UNCHANGED ??= "1"
 OSTREE_UPDATE_SUMMARY ??= "0"
 
 BUILD_OSTREE_TARBALL ??= "1"
@@ -27,6 +28,7 @@ TAR_IMAGE_ROOTFS:task-image-ostree = "${OSTREE_ROOTFS}"
 TAR_IMAGE_ROOTFS:task-image-ostreecommit = "${OSTREE_REPO}"
 
 OSTREE_RMDIR_HELPER_MSGTYPE ?= "bbwarn"
+OSTREE_VERSIONED_DIRS ?= ""
 ostree_rmdir_helper(){
     if [ -d ${1} ] && [ ! -L ${1} ]; then
         if ! rmdir ${1}; then
@@ -86,6 +88,17 @@ IMAGE_CMD:ostree () {
     dirs="opt mnt media srv"
 
     for dir in ${dirs}; do
+        case " ${OSTREE_VERSIONED_DIRS} " in
+            *" ${dir} "*)
+                # Vendor applications under /opt belong to the versioned OS.
+                # Do not silently delete them while converting the rootfs.
+                if [ -d "${dir}" ] && [ ! -L "${dir}" ]; then
+                    mv "${dir}" "usr/${dir}"
+                    ln -s "usr/${dir}" "${dir}"
+                fi
+                continue
+                ;;
+        esac
         ostree_rmdir_helper ${dir}
 
         if [ -n "${SYSTEMD_USED}" ]; then
@@ -159,7 +172,7 @@ IMAGE_CMD:ostreecommit () {
     # Commit the result
     ostree_target_hash=$(ostree --repo=${OSTREE_REPO} commit \
            --tree=dir=${OSTREE_ROOTFS} \
-           --skip-if-unchanged \
+           ${@'--skip-if-unchanged' if d.getVar('OSTREE_COMMIT_SKIP_IF_UNCHANGED') == '1' else ''} \
            --branch=${OSTREE_BRANCHNAME} \
            --subject="${OSTREE_COMMIT_SUBJECT}" \
            --body="${OSTREE_COMMIT_BODY}" \

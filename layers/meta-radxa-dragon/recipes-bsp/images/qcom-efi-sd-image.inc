@@ -5,7 +5,8 @@
 IMAGE_FSTYPES:remove = "qcomflash"
 IMAGE_FSTYPES += "wic wic.bmap"
 
-WKS_FILE = "qcom-efi-sd.wks.in"
+WKS_FILE = "${@'qcom-ota-sd.wks.in' if d.getVar('QCOM_OTA_ENABLE') == '1' else 'qcom-efi-sd.wks.in'}"
+WKS_FILE:sota = "qcom-ota-sd.wks.in"
 
 # WIC only needs its built-in rawcopy and rootfs plugins for this layout.
 WICVARS:remove = "BBLAYERS"
@@ -16,5 +17,5 @@ QCOM_EFI_ROOTFS_LABEL ?= "${@d.getVar('QCOM_BOOTIMG_ROOTFS').split('=', 1)[1] if
 
 # Boards may select a different EFI loader and ESP layout.
 QCOM_ESP_IMAGE ?= "esp-qcom-image"
-do_image_wic[depends] += "${QCOM_ESP_IMAGE}:do_image_complete"
+do_image_wic[depends] += "${@'${QCOM_ESP_IMAGE}:do_image_complete' if d.getVar('QCOM_OTA_ENABLE') != '1' else ''}"
 do_image_wic[vardeps] += "QCOM_EFI_ROOTFS_LABEL QCOM_ESP_IMAGE"

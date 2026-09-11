@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Confirm a healthy Qualcomm OTA deployment
+After=local-fs.target basic.target
+ConditionPathExists=/run/ostree-booted
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qcom-ota confirm
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

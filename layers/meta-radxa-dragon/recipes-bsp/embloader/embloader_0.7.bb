@@ -37,6 +37,7 @@ SRCREV_nanosvg = "ea6a6aca009422bba0dbad4c80df6e6ba0c82183"
 SRCREV_newlib = "3a03874f73db015d93c3b54c6bad32a2852c591e"
 SRCREV_stb = "f58f558c120e9b32c217290b80bad1a0729fbb2c"
 SRCREV_FORMAT = "main_edk2_brotli_mipisyst_dtc_jsonc_libufdt_libyaml_lvgl_nanosvg_newlib_stb"
+SRC_URI += "file://0001-sdboot-count-ota-attempts.patch"
 B = "${WORKDIR}/build"
 
 inherit deploy python3native

@@ -1,5 +1,11 @@
 # Radxa Dragon Q6A Yocto Usage Guide
 
+OTA is enabled by default for `qcom-distro`. See [OTA operation and release
+instructions](README-OTA.md). OTA images retain embloader but use OSTree
+deployment paths, a `/boot` ESP, signed updates and boot-attempt counting.
+The fixed `RadxaOS/<kernel-release>` ESP layout described below applies when
+`QCOM_OTA_ENABLE = "0"` is explicitly selected.
+
 This guide builds the EFI-based Yocto images for the Radxa Dragon Q6A and writes
 them to a microSD card or UFS module.
 

@@ -1,0 +1,28 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Fixed Android boot partitions cannot pass a different deployment each boot.
+# The atomic symlink is written only after a complete OSTree deployment.
+ostree_enabled() {
+    return 0
+}
+
+ostree_run() {
+    [ -n "$ROOTFS_DIR" ] || return 1
+    selected=$(readlink "$ROOTFS_DIR/ostree/qcom-active") || return 1
+    case "$selected" in
+        deploy/qcom/deploy/*) ;;
+        *) echo 'Invalid QCOM OTA deployment selector' >&2; return 1 ;;
+    esac
+    leaf=${selected##*/}
+    [ "$selected" = "deploy/qcom/deploy/$leaf" ] || return 1
+    checksum=${leaf%.*}
+    serial=${leaf##*.}
+    [ "${#checksum}" -eq 64 ] || return 1
+    case "$checksum" in *[!0-9a-f]*) return 1 ;; esac
+    case "$serial" in ''|*[!0-9]*) return 1 ;; esac
+    [ -d "$ROOTFS_DIR/ostree/$selected/usr" ] || return 1
+    # The second argument is supported by the pinned libostree 2026.1.
+    # prepare-root requires the argument to name a symlink, not its target.
+    # It overrides only prepare-root's selection; the fixed kernel is untouched.
+    /usr/lib/ostree/ostree-prepare-root "$ROOTFS_DIR" "ostree=/ostree/qcom-active"
+}

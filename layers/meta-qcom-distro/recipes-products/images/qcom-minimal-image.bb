@@ -31,7 +31,9 @@ CORE_IMAGE_EXTRA_INSTALL += "${@bb.utils.contains_any('PREFERRED_PROVIDER_virtua
 ## To be removed once https://lists.openembedded.org/g/openembedded-core/message/231436 is accepted
 python __anonymous() {
     qcom_dtb_default = d.getVar("QCOM_DTB_DEFAULT")
-    if qcom_dtb_default == "multi-dtb":
+    # OTA selects a single UKI DTB independently and needs the complete list
+    # for raw-kernel deployment and fixed-boot compatibility fingerprints.
+    if qcom_dtb_default == "multi-dtb" and d.getVar("QCOM_OTA_ENABLE") != "1":
         d.setVar("KERNEL_DEVICETREE", "")
 }
 

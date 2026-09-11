@@ -179,12 +179,12 @@ def validate_module_dependencies(contents):
     return entries
 
 
-def audit_module_dependencies(image, release):
-    listing = run([find_tool("debugfs"), "-R", "ls -p /usr/lib/modules", str(image)])
+def audit_module_dependencies(image, release, deployment=""):
+    listing = run([find_tool("debugfs"), "-R", f"ls -p {deployment}/usr/lib/modules", str(image)])
     names = {fields[5] for line in listing.splitlines()
              if len(fields := line.split("/")) > 5 and fields[5] not in (".", "..")}
     require(names == {release}, f"{image.name}: rootfs kernel releases differ from deploy")
-    base = f"/usr/lib/modules/{release}"
+    base = f"{deployment}/usr/lib/modules/{release}"
     contents = run([find_tool("debugfs"), "-R", f"cat {base}/modules.dep", str(image)])
     entries = validate_module_dependencies(contents)
     required_names = {"cfg80211.ko.zst", "bluetooth.ko.zst", "autofs4.ko.zst",
@@ -487,6 +487,21 @@ def audit_deploy(profile, deploy):
     )
 
     bls_boot = profile.get("boot_mode") == "embloader-bls"
+    if (deploy / f"{sd_stem}.ota.json").is_file():
+        from qcom_ota_audit import audit_ota_image
+        require(dtb.is_file(), f"missing artifact: {dtb}")
+        compatibles = dtb_root_stringlist_property(dtb, "compatible")
+        require(all(value in compatibles for value in profile["compatibles"]), "OTA board DTB mismatch")
+        if bls_boot:
+            audit_q6a_pmic(dtb)
+        images = {
+            "sector_512": audit_ota_image(deploy, sd_stem, machine, 512, profile),
+            "ufs_sector_4096": audit_ota_image(deploy, ufs_stem, machine, 4096, profile),
+        }
+        audit_bios(bios, profile["bios_required"])
+        return {"status": "passed", "machine": machine, "ota": True,
+                "evidence": "offline-structure", "images": images,
+                "bundle": audit_bundle(profile, deploy, sd, ufs)}
     for path in ((dtb, sd, ufs) if bls_boot else (dtb, uki, sd, ufs)):
         require(path.is_file(), f"missing artifact: {path}")
 

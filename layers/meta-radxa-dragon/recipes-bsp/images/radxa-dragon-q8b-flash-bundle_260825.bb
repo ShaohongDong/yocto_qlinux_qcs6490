@@ -42,6 +42,13 @@ do_deploy() {
         "$bundle/images/q8b-ufs-4k.wic"
     install -m 0644 "${DEPLOY_DIR_IMAGE}/${Q8B_UFS_IMAGE}.wic.bmap" \
         "$bundle/images/q8b-ufs-4k.wic.bmap"
+    if [ "${QCOM_OTA_ENABLE}" = "1" ]; then
+        install -d "$bundle/ota"
+        for image in "${Q8B_SD_IMAGE}" "${Q8B_UFS_IMAGE}"; do
+            install -m 0644 "${DEPLOY_DIR_IMAGE}/$image.ota.json" "$bundle/ota/"
+            install -m 0644 "${DEPLOY_DIR_IMAGE}/$image.ostreecommit.tar.xz" "$bundle/ota/"
+        done
+    fi
     install -m 0644 "${UNPACKDIR}/RADXA-DRAGON-Q8B-FLASHING.md" \
         "$bundle/README.md"
 

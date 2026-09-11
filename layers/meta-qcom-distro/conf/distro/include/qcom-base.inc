@@ -69,3 +69,5 @@ PACKAGECONFIG:append:pn-qemu = " pixman virtfs vnc-jpeg vnc-sasl"
 # Prefer TensorFlow Lite 2.16 due to availability of DSP‑certified AIHUB models
 PREFERRED_VERSION_tensorflow-lite ??= "2.16.1"
 PREFERRED_VERSION_flatbuffers-tflite ??= "23.5.26"
+
+require conf/distro/include/qcom-ota.inc

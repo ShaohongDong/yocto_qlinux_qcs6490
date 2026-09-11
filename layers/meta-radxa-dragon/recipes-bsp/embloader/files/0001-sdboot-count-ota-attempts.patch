@@ -1,0 +1,174 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] sdboot: persist BLS attempts and skip exhausted entries
+
+Keep the existing raw-kernel loader and implement the boot-count filename
+contract used by OSTree. Publish the selected path for explicit health checks.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- /dev/null
++++ b/embloader/include/qcom-bootcount.h
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef QCOM_BOOTCOUNT_H
++#define QCOM_BOOTCOUNT_H
++#include <stddef.h>
++#include <string.h>
++#include <stdio.h>
++
++/* Parse a BLS entry name without .conf. Malformed counters fail closed. */
++static inline int qcom_bootcount_parse(const char *name, unsigned *left,
++                                      unsigned *done, size_t *stem)
++{
++    const char *plus = strrchr(name, '+'), *p;
++    unsigned values[2] = {0, 0};
++    if (!plus) return 0;
++    if (plus == name) return -1;
++    p = plus + 1;
++    for (unsigned i = 0; i < 2; i++) {
++        if (*p < '0' || *p > '9') return -1;
++        do {
++            if (values[i] > 100000) return -1;
++            values[i] = values[i] * 10 + (unsigned)(*p++ - '0');
++        } while (*p >= '0' && *p <= '9');
++        if (i == 0 && *p == '-') { p++; continue; }
++        if (*p) return -1;
++        break;
++    }
++    *left = values[0];
++    *done = values[1];
++    *stem = (size_t)(plus - name);
++    return 1;
++}
++#endif
+--- a/embloader/src/sdboot/boot.c
++++ b/embloader/src/sdboot/boot.c
+@@ -1,8 +1,69 @@
+ #include <Library/MemoryAllocationLib.h>
++#include <Library/BaseLib.h>
++#include <Library/UefiRuntimeServicesTableLib.h>
++#include "file-utils.h"
++#include "encode.h"
++#include "qcom-bootcount.h"
+ #include "internal.h"
+ #include "log.h"
+ #include "efi-utils.h"
+ #include "linuxboot.h"
++
++/* Persist the attempt before starting the kernel. A write failure must not
++ * boot an uncounted candidate. Good entries have no suffix and stay unchanged. */
++static EFI_STATUS qcom_count_attempt(sdboot_boot_loader *loader) {
++    unsigned left, done;
++    size_t stem;
++    int counted = qcom_bootcount_parse(loader->name, &left, &done, &stem);
++    EFI_FILE_PROTOCOL *file = NULL;
++    EFI_FILE_INFO *old = NULL, *info = NULL;
++    EFI_STATUS status;
++    CHAR16 *wide = NULL, *bootpath = NULL;
++    char path[512], newname[256], newpath[512];
++    if (counted < 0 || (counted > 0 && left == 0)) return EFI_ACCESS_DENIED;
++    if (!counted) {
++        gRT->SetVariable(L"LoaderBootCountPath", &gLoaderGuid, 0, 0, NULL);
++        return EFI_SUCCESS;
++    }
++    if (stem > 180) return EFI_INVALID_PARAMETER;
++    snprintf(path, sizeof(path), "/loader/entries/%s.conf", loader->name);
++    snprintf(newname, sizeof(newname), "%.*s+%u-%u.conf", (int)stem, loader->name, left - 1, done + 1);
++    snprintf(newpath, sizeof(newpath), "/loader/entries/%s", newname);
++    status = efi_open(loader->root, &file, path, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
++    if (EFI_ERROR(status)) return status;
++    status = efi_file_get_info(file, &old);
++    if (EFI_ERROR(status)) goto out;
++    wide = encode_utf8_to_utf16(newname);
++    bootpath = encode_utf8_to_utf16(newpath);
++    if (!wide || !bootpath) { status = EFI_OUT_OF_RESOURCES; goto out; }
++    UINTN size = OFFSET_OF(EFI_FILE_INFO, FileName) + StrSize(wide);
++    info = malloc(size);
++    if (!info) { status = EFI_OUT_OF_RESOURCES; goto out; }
++    memcpy(info, old, OFFSET_OF(EFI_FILE_INFO, FileName));
++    info->Size = size;
++    memcpy(info->FileName, wide, StrSize(wide));
++    status = file->SetInfo(file, &gEfiFileInfoGuid, size, info);
++    if (EFI_ERROR(status)) goto out;
++    status = file->Flush(file);
++    if (EFI_ERROR(status)) goto out;
++    status = gRT->SetVariable(L"LoaderBootCountPath", &gLoaderGuid,
++        EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
++        StrSize(bootpath), bootpath);
++    if (!EFI_ERROR(status)) {
++        /* A retry from the menu must use the already decremented name. */
++        char *updated = strndup(newname, strlen(newname) - 5);
++        if (!updated) { status = EFI_OUT_OF_RESOURCES; goto out; }
++        free(loader->name);
++        loader->name = updated;
++    }
++out:
++    if (old) FreePool(old);
++    if (info) free(info);
++    if (wide) free(wide);
++    if (bootpath) free(bootpath);
++    if (file) file->Close(file);
++    return status;
++}
+ 
+ /**
+  * @brief Convert a sdboot loader configuration to linux bootinfo structure.
+@@ -48,6 +109,8 @@
+ EFI_STATUS sdboot_boot_loader_invoke(sdboot_menu *menu, sdboot_boot_loader *loader) {
+ 	if (!menu || !loader) return EFI_INVALID_PARAMETER;
+ 	if (!sdboot_boot_loader_check(loader)) return EFI_INVALID_PARAMETER;
++    EFI_STATUS count_status = qcom_count_attempt(loader);
++    if (EFI_ERROR(count_status)) return count_status;
+ 	if (loader->version) {
+ 		log_debug("sdboot loader use version %s as ktype", loader->version);
+ 		if (g_embloader.ktype) free(g_embloader.ktype);
+--- a/embloader/src/sdboot/file.c
++++ b/embloader/src/sdboot/file.c
+@@ -1,4 +1,5 @@
+ #include "log.h"
++#include "qcom-bootcount.h"
+ #include "encode.h"
+ #include "internal.h"
+ #include "file-utils.h"
+@@ -76,6 +77,14 @@
+ 			status = EFI_OUT_OF_RESOURCES;
+ 			goto fail;
+ 		}
++        unsigned left, done;
++        size_t stem;
++        int counted = qcom_bootcount_parse(loader->name, &left, &done, &stem);
++        if (counted < 0 || (counted > 0 && left == 0)) {
++            log_warning("skipping exhausted or invalid boot entry %s", loader->name);
++            status = EFI_NOT_FOUND;
++            goto fail;
++        }
+ 		loader->root_handle = dir->handle;
+ 		loader->root = dir->root;
+ 		if (EFI_ERROR(status) || !loader->root) {
+--- a/embloader/src/sdboot/menu.c
++++ b/embloader/src/sdboot/menu.c
+@@ -170,6 +170,23 @@
+ 		list_obj_add_new(&g_embloader.menu->loaders, loader);
+ 	} while ((p = p->next));
+ 	sdboot_items_sort();
++    /* OSTree selects the first non-exhausted entry in BLS order. Resolve its
++     * wildcard to an exact name for embloader's existing menu implementation. */
++    if (g_embloader.menu->default_entry &&
++        strcmp(g_embloader.menu->default_entry, "ostree-*") == 0) {
++        embloader_loader *best = NULL;
++        list *node = list_first(g_embloader.menu->loaders);
++        for (; node; node = node->next) {
++            LIST_DATA_DECLARE(candidate, node, embloader_loader*);
++            if (!candidate || candidate->type != LOADER_SDBOOT || !candidate->name ||
++                strncmp(candidate->name, "ostree-", 7) != 0) continue;
++            if (!best || candidate->priority < best->priority) best = candidate;
++        }
++        if (best) {
++            free(g_embloader.menu->default_entry);
++            g_embloader.menu->default_entry = strdup(best->name);
++        }
++    }
+ 	sdboot_boot_add_auto_items();
+ 	embloader_sort_menu_loaders();
+ 	return EFI_SUCCESS;
