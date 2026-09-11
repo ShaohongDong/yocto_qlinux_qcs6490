@@ -5,6 +5,9 @@
 /sstate-cache/
 /buildhistory/
 
+# Local build and validation artifacts
+/artifacts/
+
 # devtool workspace and BitBake runtime files
 /workspace/
 /bitbake-cookerdaemon.log
