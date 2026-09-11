@@ -36,6 +36,8 @@ SRC_URI = " \
 
 S = "${UNPACKDIR}/${BP}"
 
+SRC_URI:append:radxa-dragon-q6a = " file://0004-q6a-soundwire-port-counts.patch"
+
 KBUILD_DEFCONFIG = "defconfig"
 
 # Match the configuration order used by radxa-pkg/linux-qcom 7.0.11-6.
