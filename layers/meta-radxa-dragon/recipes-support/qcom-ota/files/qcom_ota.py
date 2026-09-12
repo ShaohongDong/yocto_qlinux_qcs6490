@@ -299,6 +299,12 @@ def bless_embloader(active):
     if not entry.is_file():
         if good.is_file() and matches(good):
             return  # Idempotent confirmation in the same boot.
+        # Pruning older deployments renumbers the already blessed BLS entries.
+        # Accept only an uncounted entry for this exact running deployment.
+        entries = [candidate for candidate in (BOOT / 'loader/entries').glob('*.conf')
+                   if matches(candidate)]
+        if entries and all('+' not in candidate.name for candidate in entries):
+            return
         raise OTAError('Booted BLS entry is missing')
     if not matches(entry):
         raise OTAError('Boot-count entry does not match the running deployment')

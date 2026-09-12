@@ -360,6 +360,16 @@ class ConfirmationTests(unittest.TestCase):
                 self.assertFalse(entry.exists())
                 self.assertTrue((entries / 'ostree-2-qcom.conf').exists())
                 ota.bless_embloader(active)
+                renamed = entries / 'ostree-1-qcom.conf'
+                (entries / 'ostree-2-qcom.conf').rename(renamed)
+                ota.bless_embloader(active)
+                with self.assertRaises(ota.OTAError):
+                    ota.bless_embloader(dict(checksum='b' * 64, serial=0))
+                counted = renamed.with_name('ostree-1-qcom+3.conf')
+                renamed.rename(counted)
+                with self.assertRaises(ota.OTAError):
+                    ota.bless_embloader(active)
+                counted.rename(renamed)
                 variable.unlink()
                 ota.bless_embloader(active)
 
