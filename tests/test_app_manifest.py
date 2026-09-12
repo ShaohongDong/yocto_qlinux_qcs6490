@@ -45,6 +45,24 @@ class AppManifestTests(unittest.TestCase):
         self.assertIn(self.manifest, spec.parse_dependencies())
         self.assertIn(self.root / "kernel/dts", spec.parse_dependencies())
 
+    def test_python_bytecode_does_not_change_build_inputs(self):
+        before = AppManifest(self.manifest)
+        cache = self.root / "src/__pycache__"
+        cache.mkdir()
+        bytecode = cache / "helper.cpython-312.pyc"
+        bytecode.write_bytes(b"first interpreter")
+        loose = self.root / "src/helper.pyc"
+        loose.write_bytes(b"legacy bytecode")
+        after = AppManifest(self.manifest)
+        self.assertEqual(before.digest, after.digest)
+        self.assertNotIn(bytecode, after.parse_dependencies())
+        self.assertNotIn(cache, after.parse_dependencies())
+        self.assertNotIn(loose, after.parse_dependencies())
+        bytecode.write_bytes(b"different interpreter")
+        self.assertEqual(after.digest, AppManifest(self.manifest).digest)
+        (self.root / "src/helper.py").write_text("real_source = 1\n")
+        self.assertNotEqual(after.digest, AppManifest(self.manifest).digest)
+
     def test_duplicate_and_unknown_keys_are_rejected(self):
         text = self.manifest.read_text(encoding="utf-8")
         self.manifest.write_text(text + "name: duplicate\n", encoding="utf-8")

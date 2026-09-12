@@ -372,8 +372,9 @@ class AppManifest:
                 result.add(relative)
             else:
                 for child in path.rglob("*"):
-                    if child.is_file():
-                        result.add(child.relative_to(self.root).as_posix())
+                    relative_child = child.relative_to(self.root)
+                    if child.is_file() and "__pycache__" not in relative_child.parts and child.suffix not in (".pyc", ".pyo"):
+                        result.add(relative_child.as_posix())
         return sorted(result)
 
     def parse_dependencies(self) -> list[Path]:
@@ -385,6 +386,8 @@ class AppManifest:
             if path.is_dir():
                 for directory, directories, files in os.walk(path, followlinks=False):
                     root = Path(directory)
+                    directories[:] = [name for name in directories if name != "__pycache__"]
+                    files = [name for name in files if Path(name).suffix not in (".pyc", ".pyo")]
                     result.add(root)
                     result.update(root / name for name in directories + files)
         return sorted(result)
