@@ -1,4 +1,15 @@
-# Native CAM3 RAW diagnostic
+# Native CAM3 preview and RAW diagnostic
+
+The selected app image integrates the production native device tree and starts
+a maximized preview through `imx708-native-preview.service` after Weston and
+`imx708-native-drivers.service`. No diagnostic BLS entry is needed for normal
+use. The procedures below remain available for isolated driver diagnosis.
+
+`imx708-camera-launch` is shared by the service and desktop entry. It runs as
+the Weston session user, waits at most 30 seconds for devices, and uses
+`--backend=native --native-autostart --maximized`. One native instance per user
+is allowed. Normal close does not trigger a service restart. Photos from this
+launcher go to `~/Pictures/imx708-camera`. Native CLI also accepts `--maximized`.
 
 This path uses Linux `imx708`, GPIO I2C and CAMSS; it does not enable the CamX
 backend in `app.yaml`. It targets an IMX708 module on Q6A CAM3 with module-local
@@ -94,3 +105,70 @@ archive the exhausted diagnostic entries and restart `qcom-ota-confirm.service`.
 Verify normal boot selection, OTA confirmation, service health and disabled
 native camera nodes. Production integration and CamX acceptance remain separate
 work.
+
+## Native application preview
+
+Build with `-DIMX708_WITH_QMMF=OFF` for an independent native-only executable,
+or leave QMMF enabled to retain both backends. The default CLI backend remains
+CamX. `--test-source` remains synthetic and cannot be combined with native mode.
+The native backend requires `media-ctl` at runtime; it configures the existing
+media graph but does not install DTBs, load modules or change boot entries.
+
+After staged driver loading, run inside the board's Weston session:
+
+```sh
+imx708-camera --backend=native --native-autostart --output-dir /var/tmp/photos
+```
+
+For temporary SSH diagnostics, use the existing session's `XDG_RUNTIME_DIR`,
+`WAYLAND_DISPLAY` and appropriate device access. Keep the executable and output
+in a separate temporary directory; do not replace the installed application.
+
+The native UI receives 2304x1296 RAW10 at approximately 30 fps and displays
+1152x648 RGB, scaled proportionally to fit the screen. Exposure is expressed in
+sensor lines, and analogue gain in driver register codes; ranges come from the
+driver. The Apply button requests new settings on the capture thread. Three
+frames are discarded after sensor exposure/gain changes to allow settling.
+Software colour settings are black level (default 64), red/blue multipliers
+(default 1), and fixed gamma 2.2. These defaults are not calibrated ISP tuning.
+
+Photos use the first valid frame whose monotonic EOF timestamp follows the
+request. A background task writes matching `.jpg`, `.raw` and `.json` files;
+JSON records format, stride, sequence, timestamp and applied settings. JPEG is
+1152x648; RAW remains 2304x1296 packed RGGB10. All files use unique names and
+`.partial` staging. The JPEG is published only after its companions exist.
+Failures retain incomplete files and never report a successful photo.
+
+Capture owns four MMAP buffers and requeues promptly. The appsrc preview queue
+holds at most two RGB buffers and drops the oldest on overload. A bad/short
+buffer is rejected, sequence gaps are counted, and three seconds without a
+valid frame stops the stream. Stop, window close and SIGINT/SIGTERM perform
+STREAMOFF, unmap buffers and join the capture thread. Photo encoding/writing
+does not block capture. Native recording, AE, AWB and autofocus are unavailable.
+
+Before STREAMON, the worker waits for the sensor's normal runtime autosuspend
+to finish (up to seven seconds, cancellable in 100 ms intervals). This ensures
+a complete driver-managed power cycle, including after a cancelled start or
+another process's colour-bar session. Warm colour-bar-to-image transitions on
+this module otherwise can produce no frames. Already-suspended sensors start
+immediately; rapid stop/start may wait about five seconds. No GPIO or PM policy
+is changed by the application.
+
+Diagnostic CLI options:
+
+- `--native-test-pattern`: show sensor colour bars; photos are disabled.
+- `--native-exercise-seconds N`: real camera only, perform five restarts and
+  three photos (baseline, increased gain, reduced exposure) through the GTK
+  controls and Apply path, restoring original settings afterwards. Stop after
+  N seconds from the first displayed frame in the final streaming session
+  (10–3600). This is a physical hardware exercise, unlike `--exercise-dir`.
+
+On the analysis host, `scripts/check-native-photos.py PHOTO_DIRECTORY` checks
+JPEG/RAW/JSON grouping and compares JPEG pixels with an independent numpy RAW
+rendering reference, allowing for JPEG compression. It does not grade image
+quality. Keep the scene stationary for the exposure/gain comparison.
+
+Check per-second `capture_fps`, `display_fps`, `bad` and `gaps` logs along with
+physical screen observations. Display counts mean delivery to the GTK sink;
+they do not prove panel refresh or colour accuracy. After testing, follow the
+diagnostic entry archival and normal-boot restoration procedure above.

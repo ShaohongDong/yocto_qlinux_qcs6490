@@ -64,6 +64,19 @@ class RawDtbTests(unittest.TestCase):
         self.assertEqual(RAW.run("fdtget", output, receiver, "clock-lanes"), "7")
         self.assertEqual(RAW.run("fdtget", output, receiver, "data-lanes"), "0 1")
 
+    def test_production_include_enables_same_audited_wiring(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]/"lib"))
+        from qcom_apps.native_camera import audit_dtb
+        source = self.directory/"base.dts"
+        include = Path(__file__).resolve().parents[1]/"kernel/dts/q6a-imx708-native.dtsi"
+        source.write_text(source.read_text() + include.read_text())
+        output = self.directory/"production.dtb"
+        subprocess.run(["dtc", "-@", "-o", str(output), str(source)],check=True)
+        audit_dtb(output)
+        RAW.run("fdtput", "-t", "s", output, "/cci-a", "status", "okay")
+        with self.assertRaises(ValueError): audit_dtb(output)
+
     def test_refuses_other_board(self):
         RAW.run("fdtput", "-t", "s", self.base, "/", "compatible", "other,board")
         with self.assertRaises(ValueError):

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Q6A IMX708 native camera preview
+Wants=weston.service imx708-native-drivers.service
+After=weston.service imx708-native-drivers.service
+PartOf=weston.service
+
+[Service]
+Type=simple
+User=weston
+Group=weston
+SupplementaryGroups=video render
+ExecStart=/usr/bin/imx708-camera-launch
+Restart=no
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical.target

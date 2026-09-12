@@ -52,6 +52,16 @@ void Output::write(const void* data, size_t size) {
         size -= static_cast<size_t>(count);
     }
 }
+void Output::reserve_related(const std::filesystem::path& primary_partial, const std::string& suffix) {
+    require(fd_ < 0, "Output already open");
+    require(suffix == ".raw" || suffix == ".json", "Unsupported companion type");
+    require(primary_partial.extension() == ".partial", "Expected a reserved primary output");
+    auto final = primary_partial; final.replace_extension(); final.replace_extension(suffix);
+    require(!std::filesystem::exists(final), "Companion destination already exists");
+    partial_ = final.string() + ".partial";
+    fd_ = open(partial_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd_ < 0) throw std::runtime_error(std::strerror(errno));
+}
 std::filesystem::path Output::commit() {
     require(opened(), "Output is not open");
     if (fsync(fd_) != 0) throw std::runtime_error(std::strerror(errno));

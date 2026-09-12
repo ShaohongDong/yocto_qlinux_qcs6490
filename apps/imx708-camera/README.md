@@ -1,15 +1,13 @@
 # IMX708 Camera for Q6A CAM3
 
-Target: Raspberry Pi Camera Module 3 Wide (normal IR-cut version), Q6A CAM3,
-HDMI graphical session, Qualcomm CamX hardware ISP. The C++/GTK application
-uses the actual `qtiqmmfsrc` camera-service backend. **IMX708 CamX sensor,
-actuator, tuning and board DT integration are not yet available. This is not
-a working board camera release.** See [bring-up evidence](docs/bringup.md).
-The [source-built register core](docs/sensor-core.md) now supplies ordered
-register tables, timing and exposure/gain calculations with host tests.
-Reference CHI callbacks, module/actuator binary generation and an inactive
-CAM3 DT candidate are now implemented; see [material-based progress](docs/materials-progress.md)
-for the measured ABI and binary-format differences that still prevent deployment.
+Target: Raspberry Pi Camera Module 3 Wide on Q6A CAM3, with the HDMI Weston
+session. Selecting this app enables the Linux IMX708 GPIO-I2C/CAMSS path and
+opens a maximized native preview at boot. Native CCI remains disabled.
+
+Native capture is 2304x1296 RAW10 at approximately 30 fps. The preview and JPEG
+are 1152x648 RGB with manual exposure, analogue gain, black level and red/blue
+multipliers. Software colour processing is not calibrated ISP tuning. Native
+recording, AE, AWB and autofocus are unavailable. See [native usage](docs/native-raw.md).
 
 ## Build
 
@@ -18,49 +16,36 @@ From the SDK root in a fresh shell:
 ```sh
 source ./environment-setup-armv8a-qcom-linux
 scripts/qcom-app validate --app imx708-camera --machine radxa-dragon-q6a
-scripts/qcom-app build --app imx708-camera --machine radxa-dragon-q6a
+scripts/qcom-app image --app imx708-camera --machine radxa-dragon-q6a
 ```
 
-`image` selects `qcom-multimedia-proprietary-efi-sd-image`; UFS 4K is also
-explicitly allowed by the manifest. By default both image builds fail at
-`do_imx708_support_check` with the missing integration requirements. To package
-the application and its dependencies in a Q6A development SD image, run:
-
-```sh
-scripts/qcom-app image --app imx708-camera --machine radxa-dragon-q6a \
-  --allow-incomplete-camera
-```
-
-This explicit option warns about incomplete integration and installs
-`/etc/imx708-camera-development`. It does not enable real IMX708 capture or
-install candidate CHI, tuning or device-tree assets. Client
-and register-core builds remain available. The existing kernel contains `imx708.ko` and CAMSS;
-neither alone connects an IMX708 to the proprietary ISP. No guessed kernel
-patches, device tree, sensor binaries or copied IMX577 tuning are installed.
+The default image is `qcom-multimedia-proprietary-efi-sd-image`. The native image
+checks the selected device tree, modules, dependencies and startup services;
+`--allow-incomplete-camera` is not required for this path. The UFS image remains
+an allowed build target but is not covered by SD/OTA acceptance.
 
 ## Use
 
-Launch **IMX708 Camera** from the HDMI desktop or run `imx708-camera` in the
-Wayland/X11 session. Start preview, choose automatic controls or manual
-exposure/ISO and white-balance presets, take photos or start/stop recording.
-Manual color temperature is available through the white-balance selector.
-Single autofocus sends an AF trigger; continuous focus is selectable.
+At boot, the `weston` user's preview starts automatically and maximizes without
+hiding the desktop panel or window controls. Closing the window releases the
+camera and does not reopen it automatically. Launch **IMX708 Camera** from the
+desktop to reopen it; repeated launches do not create competing native streams.
+The startup service and desktop entry use `imx708-camera-launch`, which waits up
+to 30 seconds for the Weston session and camera devices. Missing camera devices
+leave a retryable error in the window. A missing display is reported in the
+service journal.
 
-The camera-service enumeration is queried at runtime. Auto-selection requires
-an IMX708 sensor-name vendor tag. If the HAL omits that tag, identify the CAM3
-sensor from board logs, then launch `imx708-camera --camera-id ID`. **CAM3 is
-not necessarily camera ID 3.** Explicit ID selection is a board binding, not
-independent proof of sensor identity.
+Photos are saved as matching JPEG/RAW/JSON groups under
+`/home/weston/Pictures/imx708-camera`. Image colours are uncalibrated; adjust
+exposure/gain and software colour controls manually. When launching the binary
+directly, use `--backend=native --native-autostart --maximized`; omit
+`--maximized` for a normal resizable window, or set `--output-dir DIR`.
 
-Preview and video request 1920x1080 at 30 fps. Still capture requires CamX to
-advertise 4608x2592 JPEG. Recording uses `v4l2h264enc`, H.264 parsing and MP4
-muxing, with no software encoder fallback in normal mode. Preview may pause
-when entering/leaving recording. Still capture is disabled during recording.
-Files use the user's Pictures/Videos directories, unique names and mode 0600.
-They retain `.partial` until completion; recording stop and window close wait
-for EOS before publishing MP4. Errors leave incomplete files for diagnosis.
-The UI is started manually. Camera-service retains its recipe's systemd
-startup policy. The image dependency includes a Chinese font for the UI.
+The optional `--backend=camx` backend and the binary's legacy default remain
+available for development. CamX sensor, actuator, tuning and board integration
+are incomplete; native enablement does not validate that path. See
+[CamX bring-up](docs/bringup.md), [register core](docs/sensor-core.md) and
+[material compatibility](docs/materials-progress.md).
 
 ## Offline tests
 

@@ -26,6 +26,7 @@ public:
     Output& operator=(const Output&) = delete;
     ~Output();
     void reserve(const std::filesystem::path& directory, const std::string& suffix);
+    void reserve_related(const std::filesystem::path& primary_partial, const std::string& suffix);
     void write(const void* data, size_t size);
     std::filesystem::path commit();
     void close();

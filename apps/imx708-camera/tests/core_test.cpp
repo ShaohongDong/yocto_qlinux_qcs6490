@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "core.hpp"
+#include "instance.hpp"
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -13,6 +14,11 @@ int main() {
     const std::filesystem::path root(directory);
     try {
         check(imx708::self_test() == 0);
+        {
+            imx708::InstanceLock first(root / "native.lock"); check(first.held());
+            imx708::InstanceLock duplicate(root / "native.lock"); check(!duplicate.held());
+        }
+        { imx708::InstanceLock reopened(root / "native.lock"); check(reopened.held()); }
         imx708::Session session;
         bool rejected = false;
         try { session.photo(); } catch (const std::runtime_error&) { rejected = true; }
@@ -43,6 +49,18 @@ int main() {
         try { output.commit(); } catch (const std::runtime_error&) { rejected = true; }
         check(rejected); check(std::filesystem::file_size(final) == 8);
         output.close();
+        output.reserve(root, ".jpg");
+        imx708::Output raw, metadata;
+        raw.reserve_related(output.partial(), ".raw");
+        metadata.reserve_related(output.partial(), ".json");
+        raw.write("raw", 3); metadata.write("{}", 2); output.write("jpeg", 4);
+        auto companion = output.partial(); companion.replace_extension(); companion.replace_extension(".raw");
+        check(raw.commit() == companion); metadata.commit(); output.commit();
+        output.reserve(root, ".jpg");
+        raw.reserve_related(output.partial(), ".raw");
+        rejected = false;
+        try { metadata.reserve_related(output.partial(), ".raw"); } catch (const std::runtime_error&) { rejected = true; }
+        check(rejected); raw.close(); output.close();
         std::filesystem::remove_all(root);
         std::cout << "PASS: illegal transitions, unique files, incomplete output, write errors, no overwrite\n";
         return 0;

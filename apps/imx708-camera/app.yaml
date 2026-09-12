@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 schema_version: 1
 name: imx708-camera
-summary: Q6A CAM3 IMX708 CamX camera application (sensor integration pending)
+summary: Q6A CAM3 IMX708 camera with native RAW preview and optional CamX backend
 license:
   expression: MIT
   files:
@@ -17,6 +17,7 @@ inputs:
 - tests
 - scripts
 - kernel
+- systemd
 build:
   system: cmake
   source: .
@@ -27,6 +28,12 @@ check: [/usr/bin/imx708-camera, --self-test]
 dependencies:
   build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base, camera-service]
   runtime:
+  - python3-core
+  - kmod
+  - kernel-module-i2c-gpio
+  - kernel-module-imx708
+  - kernel-module-qcom-camss
+  - media-ctl
   - imx708-sensor-core
   - ttf-wqy-zenhei
   - camera-service
@@ -48,11 +55,20 @@ machines:
       allowed:
       - qcom-multimedia-proprietary-efi-sd-image
       - qcom-multimedia-proprietary-efi-ufs-4k-image
-# The native imx708.ko is already present. CamX needs different sensor/module
-# assets and board DT bindings; see docs/bringup.md. Do not install guessed DT.
+# Native GPIO I2C/CAMSS integration; this does not enable CamX sensor assets.
 kernel:
-  config: []
+  config: [kernel/config/native-camera.cfg]
   patches: []
-  device_tree: {files: [], patches: []}
+  device_tree:
+    files:
+    - source: kernel/dts/q6a-imx708-native.dtsi
+      target: arch/arm64/boot/dts/qcom/q6a-imx708-native.dtsi
+    patches: [kernel/patches/0001-q6a-enable-imx708-native.patch]
   modules: []
-services: []
+services:
+- source: systemd/imx708-native-drivers.service
+  enable: true
+  wanted_by: multi-user.target
+- source: systemd/imx708-native-preview.service
+  enable: true
+  wanted_by: graphical.target

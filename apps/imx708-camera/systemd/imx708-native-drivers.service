@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Initialize Q6A IMX708 native camera drivers
+After=systemd-udev-trigger.service
+Before=imx708-native-preview.service
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/modprobe i2c-gpio
+ExecStart=/sbin/modprobe imx708
+ExecStart=/sbin/modprobe qcom-camss
+RemainAfterExit=yes
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Start the native preview inside the existing Weston user's session."""
+import os
+from pathlib import Path
+import socket
+import stat
+import sys
+import time
+
+
+def display_socket(runtime, requested=None):
+    candidates = [Path(requested)] if requested else sorted(runtime.glob('wayland-*'))
+    for candidate in candidates:
+        path = candidate if candidate.is_absolute() else runtime / candidate
+        try:
+            if not stat.S_ISSOCK(path.stat().st_mode):
+                continue
+            with socket.socket(socket.AF_UNIX) as client:
+                client.settimeout(.1)
+                client.connect(str(path))
+            return str(path)
+        except OSError:
+            continue
+    return None
+
+
+def camera_ready(root=Path('/sys/class/video4linux')):
+    names = []
+    for path in root.glob('*/name'):
+        try:
+            names.append(path.read_text().strip())
+        except OSError:
+            pass
+    return any(name == 'imx708' or name.startswith('imx708 ') for name in names) and 'msm_vfe0_video0' in names
+
+
+def wait_ready(runtime, requested, seconds=30, ready=camera_ready):
+    deadline = time.monotonic() + seconds
+    display = None
+    while True:
+        display = display_socket(runtime, requested)
+        if display and ready():
+            return display
+        if time.monotonic() >= deadline:
+            return display
+        time.sleep(.2)
+
+
+def main():
+    runtime = Path(os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'))
+    os.environ['XDG_RUNTIME_DIR'] = str(runtime)
+    display = wait_ready(runtime, os.environ.get('WAYLAND_DISPLAY'))
+    if not display:
+        print('IMX708: Weston display unavailable after 30 seconds', file=sys.stderr)
+        return 1
+    os.environ['WAYLAND_DISPLAY'] = display
+    os.environ['GDK_BACKEND'] = 'wayland'
+    output = Path.home() / 'Pictures' / 'imx708-camera'
+    os.execv('/usr/bin/imx708-camera', ['imx708-camera', '--backend=native',
+             '--native-autostart', '--maximized', '--output-dir', str(output)])
+
+
+if __name__ == '__main__':
+    sys.exit(main())

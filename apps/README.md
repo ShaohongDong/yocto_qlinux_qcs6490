@@ -28,10 +28,11 @@ scripts/qcom-app all --app example --machine radxa-dragon-q6a
 list. The wrapper passes selection through a temporary BitBake post-config and
 does not rewrite `conf/local.conf`.
 
-For `imx708-camera` on Q6A only, `image` and `all` accept
-`--allow-incomplete-camera` to package an explicitly marked development image
-while sensor integration is incomplete. Without it the image remains blocked.
-This does not establish physical camera functionality.
+For `imx708-camera` on Q6A, the default native image enables the GPIO I2C/CAMSS
+camera path and maximized preview at boot. Its image gate checks the native
+device tree, drivers and startup configuration. The separate, incomplete CamX
+path still requires `--allow-incomplete-camera` for a development image; native
+enablement does not validate CamX functionality.
 
 ## Manifest contract
 

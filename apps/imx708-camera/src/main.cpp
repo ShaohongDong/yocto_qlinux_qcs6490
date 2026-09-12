@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "camera.hpp"
 #include "core.hpp"
+#include "native.hpp"
 #include <gtk/gtk.h>
 #include <gst/app/gstappsink.h>
 #include <glib-unix.h>
@@ -298,18 +299,28 @@ GtkWidget* button(GtkWidget* box, const char* label, GCallback callback, App* ap
 }
 
 int main(int argc, char** argv) {
+    bool native = false, camx = false;
+    for (int i = 1; i < argc; ++i) {
+        native |= std::string(argv[i]) == "--backend=native";
+        camx |= std::string(argv[i]) == "--backend=camx";
+    }
+    if (native && camx) { std::cerr << "Choose one backend\n"; return 2; }
+    if (native) return imx708::native_main(argc, argv);
     App app;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
         if (argument == "--self-test") return imx708::self_test();
         if (argument == "--help") {
-            std::cout << "imx708-camera [--camera-id ID] [--test-source] [--exercise-dir DIR]\n"
+            std::cout << "imx708-camera [--backend=camx|native] [--output-dir DIR] [--camera-id ID] [--test-source] [--exercise-dir DIR]\n"
+                         "  --backend=native --help: GPIO I2C/CAMSS preview and photo options\n"
                          "  --self-test: hardware-independent session checks\n"
                          "  --camera-id: explicit CAM3 binding after hardware identification\n"
                          "  --test-source: synthetic images only, no ISP validation\n"
                          "  --exercise-dir: synthetic JPEG and repeated MP4 lifecycle test\n"; return 0;
         }
-        if (argument == "--test-source") app.test = true;
+        if (argument == "--backend=camx") continue;
+        if (argument == "--output-dir" && i+1 < argc) app.picture_dir = argv[++i];
+        else if (argument == "--test-source") app.test = true;
         else if (argument == "--exercise-failure") app.inject_error = true;
         else if (argument == "--exercise-dir" && i+1 < argc) {
             app.exercise = app.test = true; app.picture_dir = app.movie_dir = argv[++i];
@@ -323,11 +334,11 @@ int main(int argc, char** argv) {
     if (app.inject_error && !app.exercise) { std::cerr << "--exercise-failure requires --exercise-dir\n"; return 2; }
     gst_init(nullptr, nullptr);
     if (!gtk_init_check(nullptr, nullptr)) { std::cerr << "需要 HDMI 图形会话（Wayland/X11）\n"; return 1; }
-    if (app.picture_dir.empty()) {
+    {
         const auto* pictures = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
         const auto* videos = g_get_user_special_dir(G_USER_DIRECTORY_VIDEOS);
-        app.picture_dir = pictures ? std::filesystem::path(pictures) : std::filesystem::path(g_get_home_dir()) / "Pictures";
-        app.movie_dir = videos ? std::filesystem::path(videos) : std::filesystem::path(g_get_home_dir()) / "Videos";
+        if (app.picture_dir.empty()) app.picture_dir = pictures ? std::filesystem::path(pictures) : std::filesystem::path(g_get_home_dir()) / "Pictures";
+        if (app.movie_dir.empty()) app.movie_dir = videos ? std::filesystem::path(videos) : std::filesystem::path(g_get_home_dir()) / "Videos";
     }
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(app.window), app.test ? "IMX708 Camera — 测试图案" : "IMX708 Camera · Q6A CAM3");

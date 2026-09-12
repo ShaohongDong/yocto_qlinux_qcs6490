@@ -25,6 +25,7 @@ class DevelopmentImageTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.values = {
             "QCOM_APP": "imx708-camera", "MACHINE": "radxa-dragon-q6a",
+            "QCOM_IMX708_BACKEND": "camx",
             "QCOM_APP_IMAGE_ACTIVE": "1", "QCOM_IMX708_ALLOW_INCOMPLETE": "0",
             "QCOM_IMX708_INCOMPLETE_REASON": "Sensor integration pending.",
             "IMAGE_ROOTFS": self.temp.name,
@@ -48,6 +49,34 @@ class DevelopmentImageTests(unittest.TestCase):
         marker = Path(self.temp.name) / "etc/imx708-camera-development"
         self.assertIn("real camera capture is not validated", marker.read_text())
         self.assertIn("Sensor integration pending", marker.read_text())
+
+    def test_native_image_uses_manifest_contract_without_development_marker(self):
+        self.values.update(QCOM_IMX708_BACKEND="native", QCOM_APPS_DIR=str(ROOT/"apps"))
+        self.task("do_imx708_support_check")
+        self.task("imx708_development_marker")
+        self.bb.warn.assert_not_called()
+        self.assertFalse((Path(self.temp.name)/"etc/imx708-camera-development").exists())
+
+    def test_native_contract_rejects_missing_services(self):
+        from qcom_apps.manifest import load_manifest
+        from qcom_apps.native_camera import validate_manifest
+        spec = load_manifest(ROOT/"apps", "imx708-camera")
+        with self.assertRaises(ValueError):
+            validate_manifest(SimpleNamespace(kernel=spec.kernel, services=[]))
+
+    def test_native_artifact_gate_rejects_empty_rootfs(self):
+        self.values.update(QCOM_IMX708_BACKEND="native", DEPLOY_DIR_IMAGE=self.temp.name,
+                           STAGING_BINDIR_NATIVE=self.temp.name)
+        with patch("qcom_apps.native_camera.audit_dtb") as dtb:
+            with self.assertRaises(RuntimeError):
+                self.task("do_imx708_native_image_check")
+            dtb.assert_called_once()
+
+    def test_unselected_native_image_skips_artifact_gate(self):
+        self.values.update(QCOM_IMX708_BACKEND="native", QCOM_APP_IMAGE_ACTIVE="0")
+        with patch("qcom_apps.native_camera.audit_rootfs") as rootfs:
+            self.task("do_imx708_native_image_check")
+            rootfs.assert_not_called()
 
     def test_other_machine_cannot_bypass_gate(self):
         self.values.update(MACHINE="radxa-dragon-q8b", QCOM_IMX708_ALLOW_INCOMPLETE="1")
