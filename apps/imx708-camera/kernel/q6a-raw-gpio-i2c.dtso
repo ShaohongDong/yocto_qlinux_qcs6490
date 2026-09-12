@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Diagnostic only: native GPIO I2C + IMX708, not a CamX configuration.
+// Requires the Q6A base DT symbols. CAMSS remains disabled for staged loading.
+/dts-v1/;
+/plugin/;
+
+&{/} {
+    cam3_module_clock: cam3-module-clock {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <24000000>;
+    };
+
+    // Module-internal supplies are not independently switchable by the host.
+    // As in Raspberry Pi's cam_dummy_reg, this is an explicit software supply
+    // placeholder, not a claim that the sensor rails are all 3.3 V. The host
+    // controls the module enable via GPIO78; do not drive unrelated PMIC rails.
+    cam3_internal_supply: cam3-internal-supply {
+        compatible = "regulator-fixed";
+        regulator-name = "cam3-module-internal-supplies";
+        regulator-always-on;
+    };
+
+    cam3_gpio_i2c: i2c-cam3-gpio {
+        compatible = "i2c-gpio";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        // GPIO_OPEN_DRAIN = 6, GPIO_ACTIVE_HIGH = 0.
+        sda-gpios = <&tlmm 75 6>;
+        scl-gpios = <&tlmm 76 6>;
+        i2c-gpio,delay-us = <10>;
+        i2c-gpio,timeout-ms = <100>;
+        status = "okay";
+
+        cam3_raw_sensor: imx708@1a {
+            compatible = "sony,imx708";
+            reg = <0x1a>;
+            clocks = <&cam3_module_clock>;
+            clock-names = "inclk";
+            reset-gpios = <&tlmm 78 0>;
+            vana1-supply = <&cam3_internal_supply>;
+            vana2-supply = <&cam3_internal_supply>;
+            vdig-supply = <&cam3_internal_supply>;
+            vddl-supply = <&cam3_internal_supply>;
+            status = "disabled";
+            port {
+                cam3_raw_out: endpoint {
+                    clock-lanes = <0>;
+                    data-lanes = <1 2>;
+                    clock-noncontinuous;
+                    link-frequencies = /bits/ 64 <450000000>;
+                    remote-endpoint = <&cam3_raw_in>;
+                };
+            };
+        };
+    };
+};
+
+&cci0 { status = "disabled"; };
+&cci1 { status = "disabled"; };
+&camss {
+    status = "disabled";
+    // Q6A V1.21: L10C supplies CSI 0.9 V, L6B supplies CSI 1.2 V.
+    // Same mapping as the qcom,sc7280-camss binding example.
+    vdda-phy-supply = <&vreg_l10c_0p88>;
+    vdda-pll-supply = <&vreg_l6b_1p2>;
+    ports {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        port@3 {
+            reg = <3>;
+            cam3_raw_in: endpoint {
+                // CAMSS uses hardware lane IDs, unlike the sensor endpoint.
+                // See qcs6490-rb3gen2-vision-mezzanine.dtso: clock = 7,
+                // data lanes start at 0. CAM3 connects CSI3 data 0 and 1.
+                clock-lanes = <7>;
+                data-lanes = <0 1>;
+                remote-endpoint = <&cam3_raw_out>;
+            };
+        };
+    };
+};
