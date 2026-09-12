@@ -64,18 +64,34 @@ class RawDtbTests(unittest.TestCase):
         self.assertEqual(RAW.run("fdtget", output, receiver, "clock-lanes"), "7")
         self.assertEqual(RAW.run("fdtget", output, receiver, "data-lanes"), "0 1")
 
-    def test_production_include_enables_same_audited_wiring(self):
+    def test_production_cci_include_and_conflicts(self):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]/"lib"))
         from qcom_apps.native_camera import audit_dtb
         source = self.directory/"base.dts"
         include = Path(__file__).resolve().parents[1]/"kernel/dts/q6a-imx708-native.dtsi"
-        source.write_text(source.read_text() + include.read_text())
+        fixture = source.read_text().replace('cci1: cci-b { status = "okay"; };',
+            '''cci3_default: pins-active { pins = "gpio75", "gpio76"; };
+            cci3_sleep: pins-sleep { pins = "gpio75", "gpio76"; };
+            cci1: cci-b { status = "okay"; compatible = "qcom,sc7280-cci";
+                cci1_i2c0: i2c-bus@0 { reg = <0>; };
+                cci1_i2c1: i2c-bus@1 { reg = <1>; #address-cells = <1>; #size-cells = <0>; };
+            };''')
+        source.write_text(fixture + include.read_text())
         output = self.directory/"production.dtb"
         subprocess.run(["dtc", "-@", "-o", str(output), str(source)],check=True)
         audit_dtb(output)
-        RAW.run("fdtput", "-t", "s", output, "/cci-a", "status", "okay")
-        with self.assertRaises(ValueError): audit_dtb(output)
+        original = output.read_bytes()
+        for node, prop, value, kind in [
+            ("/cci-a", "status", "okay", "s"),
+            ("/cci-b/i2c-bus@0", "status", "okay", "s"),
+            ("/cci-b/i2c-bus@1", "clock-frequency", "400000", "u"),
+            ("/cci-b/i2c-bus@1/imx708@1a", "reg", "12", "u"),
+            ("/cci-b", "pinctrl-0", "0", "u"),
+        ]:
+            output.write_bytes(original)
+            RAW.run("fdtput", "-t", kind, output, node, prop, value)
+            with self.assertRaises(ValueError): audit_dtb(output)
 
     def test_refuses_other_board(self):
         RAW.run("fdtput", "-t", "s", self.base, "/", "compatible", "other,board")

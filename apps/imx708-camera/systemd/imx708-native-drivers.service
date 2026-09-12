@@ -6,7 +6,7 @@ Before=imx708-native-preview.service
 
 [Service]
 Type=oneshot
-ExecStart=/sbin/modprobe i2c-gpio
+ExecStart=/sbin/modprobe i2c-qcom-cci
 ExecStart=/sbin/modprobe imx708
 ExecStart=/sbin/modprobe qcom-camss
 RemainAfterExit=yes

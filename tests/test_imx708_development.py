@@ -62,7 +62,7 @@ class DevelopmentImageTests(unittest.TestCase):
         from qcom_apps.native_camera import validate_manifest
         spec = load_manifest(ROOT/"apps", "imx708-camera")
         with self.assertRaises(ValueError):
-            validate_manifest(SimpleNamespace(kernel=spec.kernel, services=[]))
+            validate_manifest(SimpleNamespace(kernel=spec.kernel, services=[], dependencies=spec.dependencies))
 
     def test_native_artifact_gate_rejects_empty_rootfs(self):
         self.values.update(QCOM_IMX708_BACKEND="native", DEPLOY_DIR_IMAGE=self.temp.name,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native.hpp"
+#include "native_config.hpp"
 #include <glib.h>
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
@@ -60,11 +61,6 @@ ControlRange range(int fd, unsigned id) {
     v4l2_control c {}; c.id = id; checked(fd, VIDIOC_G_CTRL, &c);
     return {q.minimum, q.maximum, q.step, c.value};
 }
-std::string dt_string(const std::filesystem::path& path) {
-    std::ifstream stream(path); std::string s((std::istreambuf_iterator<char>(stream)), {});
-    if (!s.empty() && s.back() == '\0') s.pop_back();
-    return s;
-}
 struct Stream {
     int fd;
     bool active = false;
@@ -84,13 +80,7 @@ NativeCapture::~NativeCapture() { stop(); }
 void NativeCapture::prepare() {
     stop();
     const std::filesystem::path dt("/sys/firmware/devicetree/base");
-    if (dt_string(dt / "i2c-cam3-gpio/imx708@1a/status") != "okay")
-        throw std::runtime_error("请先启动原生摄像头诊断配置");
-    for (const auto* name : {"cci0", "cci1"}) {
-        const auto path = dt_string(dt / "__symbols__" / name);
-        if (path.empty() || dt_string(dt / path.substr(1) / "status") != "disabled")
-            throw std::runtime_error("原生模式要求 CCI0/1 保持禁用");
-    }
+    const auto expected_sensor = native_sensor_node(dt);
     media_path.clear();
     for (const auto& entry : std::filesystem::directory_iterator("/dev")) {
         const auto name = entry.path().filename().string();
@@ -104,6 +94,12 @@ void NativeCapture::prepare() {
     if (media_path.empty()) throw std::runtime_error("未找到 IMX708 CAMSS 媒体链路");
     sensor_path = command({"media-ctl", "-d", media_path, "-e", "imx708"});
     video_path = command({"media-ctl", "-d", media_path, "-e", "msm_vfe0_video0"});
+    const auto sensor_device = std::filesystem::path("/sys/class/video4linux") /
+        std::filesystem::path(sensor_path).filename() / "device";
+    if (std::filesystem::canonical(sensor_device / "of_node") !=
+        std::filesystem::canonical(expected_sensor) ||
+        std::filesystem::canonical(sensor_device / "driver").filename() != "imx708")
+        throw std::runtime_error("IMX708 未绑定到配置的 CCI 总线");
     command({"media-ctl", "-d", media_path, "-l", "\"msm_csiphy3\":1 -> \"msm_csid0\":0 [1]"});
     command({"media-ctl", "-d", media_path, "-l", "\"msm_csid0\":1 -> \"msm_vfe0_rdi0\":0 [1]"});
     Fd sensor(sensor_path);

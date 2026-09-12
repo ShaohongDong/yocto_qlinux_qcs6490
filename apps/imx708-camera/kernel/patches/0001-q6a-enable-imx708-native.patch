@@ -1,8 +1,8 @@
 From: shaohong.dong <shaohong.dong.cq@gmail.com>
 Subject: [PATCH] arm64: dts: qcom: enable selected IMX708 native application
 
-Include the validated CAM3 GPIO I2C and native CAMSS wiring only when this
-application is selected. Native CCI remains disabled.
+Include the validated CAM3 CCI1/master1 and native CAMSS wiring only when this
+application is selected. The selected application also supplies the CCI completion fix.
 
 Upstream-Status: Inappropriate [application-specific board configuration]
 Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>

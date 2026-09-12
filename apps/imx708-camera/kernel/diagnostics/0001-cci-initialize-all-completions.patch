@@ -1,0 +1,32 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] i2c: qcom-cci: initialize completions for disabled masters
+
+Controller reset always waits on master 0, even when only master 1 has
+an available DT child. Initialize all hardware master completions before
+requesting the interrupt or resetting the controller. This also covers
+the unconditional master halt path during removal.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+---
+--- a/drivers/i2c/busses/i2c-qcom-cci.c
++++ b/drivers/i2c/busses/i2c-qcom-cci.c
+@@ -536,6 +536,10 @@
+ 	if (!cci->data)
+ 		return -ENOENT;
+ 
++	/* Reset and IRQ handling use completions even for disabled masters. */
++	for (i = 0; i < cci->data->num_masters; i++)
++		init_completion(&cci->master[i].irq_complete);
++
+ 	for_each_available_child_of_node(dev->of_node, child) {
+ 		struct cci_master *master;
+ 		u32 idx;
+@@ -572,7 +576,6 @@
+ 				master->mode = I2C_MODE_FAST_PLUS;
+ 		}
+ 
+-		init_completion(&master->irq_complete);
+ 	}
+ 
+ 	/* Memory */

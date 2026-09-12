@@ -1,3 +1,14 @@
+# Native CCI preview and legacy GPIO diagnostics
+
+The selected application uses patched CCI1/master1 at 100 kHz with native CAMSS.
+IMX708 remains at address 0x1a; GPIO78 controls module enable. RAW format,
+software preview and controls are unchanged. The application validates the CCI
+DT and bound sensor rather than a fixed I2C adapter number.
+
+The GPIO-I2C bring-up instructions below describe the retained 2.0.4 baseline.
+Do not apply the legacy GPIO overlay to the new CCI image: use the original
+2.0.4 deployment for recovery. See [CCI prerequisites](isp-preflight.md).
+
 # Native CAM3 preview and RAW diagnostic
 
 The selected app image integrates the production native device tree and starts

@@ -1,7 +1,8 @@
 # Material-based CHI and CAM3 implementation
 
-No board is currently available. This does not prevent source adaptation,
-component builds, XML validation, ABI inspection or DT compilation.
+This document describes the reference-material adaptation and offline checks.
+For current board prerequisites and isolated native CCI testing, see
+[isp-preflight.md](isp-preflight.md).
 
 ## Sources recovered
 
@@ -63,7 +64,7 @@ module/actuator binaries must not be installed as current Kodiak assets.
 The earlier statement that no public reference tools existed was too broad.
 Tools and schemas have now been recovered and exercised; the remaining work
 is adapting to the current binary format and ABI, plus completing sensor and
-ISP platform integration. Board absence only prevents hardware acceptance.
+ISP platform integration. Offline checks do not establish hardware acceptance.
 
 ## Reproduce the offline checks
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Q6A CAM3 module wiring; native CCI must remain disabled.
+// Q6A CAM3 wiring with patched native CCI1/master1 and CAMSS.
 / {
     cam3_module_clock: cam3-module-clock {
         compatible = "fixed-clock";
@@ -17,43 +17,42 @@
         regulator-always-on;
     };
 
-    cam3_gpio_i2c: i2c-cam3-gpio {
-        compatible = "i2c-gpio";
-        #address-cells = <1>;
-        #size-cells = <0>;
-        // GPIO_OPEN_DRAIN = 6, GPIO_ACTIVE_HIGH = 0.
-        sda-gpios = <&tlmm 75 6>;
-        scl-gpios = <&tlmm 76 6>;
-        i2c-gpio,delay-us = <10>;
-        i2c-gpio,timeout-ms = <100>;
-        status = "okay";
+    aliases { i2c19 = &cci1_i2c1; };
+};
 
-        cam3_raw_sensor: imx708@1a {
-            compatible = "sony,imx708";
-            reg = <0x1a>;
-            clocks = <&cam3_module_clock>;
-            clock-names = "inclk";
-            reset-gpios = <&tlmm 78 0>;
-            vana1-supply = <&cam3_internal_supply>;
-            vana2-supply = <&cam3_internal_supply>;
-            vdig-supply = <&cam3_internal_supply>;
-            vddl-supply = <&cam3_internal_supply>;
-            status = "disabled";
-            port {
-                cam3_raw_out: endpoint {
-                    clock-lanes = <0>;
-                    data-lanes = <1 2>;
-                    clock-noncontinuous;
-                    link-frequencies = /bits/ 64 <450000000>;
-                    remote-endpoint = <&cam3_raw_in>;
-                };
+&cci1_i2c1 {
+    status = "okay";
+    clock-frequency = <100000>;
+    cam3_raw_sensor: imx708@1a {
+        compatible = "sony,imx708";
+        reg = <0x1a>;
+        clocks = <&cam3_module_clock>;
+        clock-names = "inclk";
+        reset-gpios = <&tlmm 78 0>;
+        vana1-supply = <&cam3_internal_supply>;
+        vana2-supply = <&cam3_internal_supply>;
+        vdig-supply = <&cam3_internal_supply>;
+        vddl-supply = <&cam3_internal_supply>;
+        status = "disabled";
+        port {
+            cam3_raw_out: endpoint {
+                clock-lanes = <0>;
+                data-lanes = <1 2>;
+                clock-noncontinuous;
+                link-frequencies = /bits/ 64 <450000000>;
+                remote-endpoint = <&cam3_raw_in>;
             };
         };
     };
 };
 
 &cci0 { status = "disabled"; };
-&cci1 { status = "disabled"; };
+&cci1 {
+    status = "okay";
+    pinctrl-0 = <&cci3_default>;
+    pinctrl-1 = <&cci3_sleep>;
+};
+&cci1_i2c0 { status = "disabled"; };
 &camss {
     status = "disabled";
     // Q6A V1.21: L10C supplies CSI 0.9 V, L6B supplies CSI 1.2 V.

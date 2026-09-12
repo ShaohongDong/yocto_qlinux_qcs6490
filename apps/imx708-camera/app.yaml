@@ -30,7 +30,7 @@ dependencies:
   runtime:
   - python3-core
   - kmod
-  - kernel-module-i2c-gpio
+  - kernel-module-i2c-qcom-cci
   - kernel-module-imx708
   - kernel-module-qcom-camss
   - media-ctl
@@ -55,10 +55,10 @@ machines:
       allowed:
       - qcom-multimedia-proprietary-efi-sd-image
       - qcom-multimedia-proprietary-efi-ufs-4k-image
-# Native GPIO I2C/CAMSS integration; this does not enable CamX sensor assets.
+# Native CCI/CAMSS integration; this does not enable CamX sensor assets.
 kernel:
   config: [kernel/config/native-camera.cfg]
-  patches: []
+  patches: [kernel/diagnostics/0001-cci-initialize-all-completions.patch]
   device_tree:
     files:
     - source: kernel/dts/q6a-imx708-native.dtsi

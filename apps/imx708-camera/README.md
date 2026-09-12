@@ -1,8 +1,8 @@
 # IMX708 Camera for Q6A CAM3
 
 Target: Raspberry Pi Camera Module 3 Wide on Q6A CAM3, with the HDMI Weston
-session. Selecting this app enables the Linux IMX708 GPIO-I2C/CAMSS path and
-opens a maximized native preview at boot. Native CCI remains disabled.
+session. Selecting this app enables the Linux IMX708 CCI1/master1/CAMSS path and
+opens a maximized native preview at boot. The selected kernel includes the CCI completion initialization fix.
 
 Native capture is 2304x1296 RAW10 at approximately 30 fps. The preview and JPEG
 are 1152x648 RGB with manual exposure, analogue gain, black level and red/blue
