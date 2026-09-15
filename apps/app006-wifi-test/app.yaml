@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: app006-wifi-test
+summary: Q6A desktop and CLI Wi-Fi scan, connection and ping tests
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+inputs: [LICENSE, README.md, CMakeLists.txt, src, tests, data]
+build:
+  system: cmake
+  source: .
+  options: [-DBUILD_TESTING=OFF]
+check: [/usr/bin/wifi-test, --self-test]
+dependencies:
+  build: [gtk+3, networkmanager]
+  runtime: [networkmanager, networkmanager-wifi, iputils-ping, ttf-wqy-zenhei]
+machines:
+  radxa-dragon-q6a:
+    kernel_providers: [linux-qcom]
+    images:
+      default: qcom-multimedia-proprietary-efi-sd-image
+      allowed: [qcom-multimedia-proprietary-efi-sd-image, qcom-minimal-efi-sd-image]
+kernel:
+  config: []
+  patches: []
+  device_tree:
+    files: []
+    patches: []
+  modules: []
+services: []

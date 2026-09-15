@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Wi-Fi Test
+Name[zh_CN]=Wi-Fi 测试
+Comment=Scan, connect and ping over Wi-Fi
+Comment[zh_CN]=扫描 Wi-Fi、连接网络与 Ping 测试
+Exec=wifi-test --gui
+Icon=wifi-test
+Terminal=false
+Categories=Network;System;

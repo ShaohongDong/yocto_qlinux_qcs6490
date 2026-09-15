@@ -18,6 +18,14 @@ FILES:${PN} += "${datadir}/weston/imx708-camera.png"
 
 # PNG is installed by the selected application, alongside its desktop entry.
 do_install:append() {
+    if [ "${QCOM_APP}" = "app006-wifi-test" ]; then
+        cat >> ${D}${sysconfdir}/xdg/weston/weston.ini <<'WIFI_LAUNCHER'
+
+[launcher]
+icon=/usr/share/weston/wifi-test.png
+path=/usr/bin/wifi-test --gui
+WIFI_LAUNCHER
+    fi
     if [ "${QCOM_APP}" = "app005-gpu-benchmark" ]; then
         cat >> ${D}${sysconfdir}/xdg/weston/weston.ini <<'GPU_LAUNCHER'
 
