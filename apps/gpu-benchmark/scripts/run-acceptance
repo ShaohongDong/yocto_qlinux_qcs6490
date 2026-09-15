@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Run on the target board; never alter clocks, services or boot configuration.
+set -eu
+binary=${GPU_BENCHMARK_BINARY:-$(dirname "$0")/gpu-benchmark}
+output=${1:-gpu-acceptance-$(date -u +%Y%m%dT%H%M%SZ)}
+mkdir -p "$output"
+uname -a > "$output/uname.txt"
+cat /etc/os-release > "$output/os-release.txt"
+cat /proc/device-tree/model > "$output/model.txt"
+ps -eo user,pid,pcpu,args > "$output/processes-before.txt"
+dmesg > "$output/dmesg-before.txt" 2> "$output/dmesg-before.error" || true
+for path in /sys/class/devfreq/*gpu*/governor; do
+    if [ -r "$path" ]; then cat "$path"; fi
+done > "$output/governor.txt"
+capture_end() {
+    dmesg > "$output/dmesg-after.txt" 2> "$output/dmesg-after.error" || true
+    ps -eo user,pid,pcpu,args > "$output/processes-after.txt"
+}
+trap capture_end EXIT
+"$binary" --self-test
+timeout -k 5 90 "$binary" --headless --suite quick --output "$output/quick" > "$output/quick.log" 2>&1
+timeout -k 5 90 "$binary" --headless --suite model3d --duration 60 --output "$output/model3d" > "$output/model3d.log" 2>&1
+printf 'Completed. Reports and board context: %s\n' "$output"

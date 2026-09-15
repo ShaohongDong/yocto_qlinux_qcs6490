@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GPU Performance
+Comment=GPU rendering throughput and 60-second stability
+Exec=gpu-benchmark --gui
+Icon=gpu-benchmark
+Terminal=false
+Categories=System;Development;

@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/KhronosGroup/glTF-Sample-Assets",
+  "commit": "90d7ede14c7e280af263824604b427a1ca02cb66",
+  "model": "FlightHelmet",
+  "license": "CC0-1.0",
+  "conversion": "Geometry and base-color textures packed into GLB; normal/occlusion/metallic-roughness textures and optional transmission omitted; simplified lighting, not a PBR reference renderer.",
+  "source_gltf_sha256": "c9c16c8b85749f62f38ec6069700e5388c6894d8e566f51a35cc270255402cd3",
+  "packaged_glb_sha256": "4554587f611a69ac1da331f468d4515d4703872cf4e0621311b8995abb94c933"
+}

@@ -112,3 +112,10 @@ encode/decode latency, throughput and matched-frame Y-PSNR. Select it with
 `scripts/qcom-app image --app hevc-benchmark --machine radxa-dragon-q6a`
 to build the multimedia SD image. See [its README](hevc-benchmark/README.md)
 for measurement definitions, headless acceptance and evidence boundaries.
+
+## GPU performance validation
+
+`gpu-benchmark` provides desktop and headless rendering baselines, fixed 1080p
+workloads and a default 60-second stability test. Build with
+`scripts/qcom-app build --app gpu-benchmark --machine radxa-dragon-q6a`.
+See [its README](gpu-benchmark/README.md) for metrics and board acceptance.

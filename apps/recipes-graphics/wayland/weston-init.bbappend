@@ -18,6 +18,14 @@ FILES:${PN} += "${datadir}/weston/imx708-camera.png"
 
 # PNG is installed by the selected application, alongside its desktop entry.
 do_install:append() {
+    if [ "${QCOM_APP}" = "gpu-benchmark" ]; then
+        cat >> ${D}${sysconfdir}/xdg/weston/weston.ini <<'GPU_LAUNCHER'
+
+[launcher]
+icon=/usr/share/weston/gpu-benchmark.png
+path=/usr/bin/gpu-benchmark --gui
+GPU_LAUNCHER
+    fi
     if [ "${QCOM_APP}" = "hevc-benchmark" ]; then
         cat >> ${D}${sysconfdir}/xdg/weston/weston.ini <<'HEVC_LAUNCHER'
 

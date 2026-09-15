@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: gpu-benchmark
+summary: Q6A GPU rendering throughput and 60-second stability benchmark
+license:
+  expression: MIT & CC0-1.0
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+  - path: src/third_party/LICENSE
+    md5: b2d96e85f26662927a12d215cb391398
+  - path: data/models/CC0-1.0.txt
+    md5: 65d3616852dbf7b1a6d4b53b00626032
+inputs: [LICENSE, README.md, CMakeLists.txt, src, tests, data, scripts]
+build:
+  system: cmake
+  source: .
+  options: [-DBUILD_TESTING=OFF]
+check: [/usr/bin/gpu-benchmark, --self-test]
+dependencies:
+  build: [gtk+3, mesa]
+  runtime: [coreutils]
+machines:
+  radxa-dragon-q6a:
+    kernel_providers: [linux-qcom]
+    images:
+      default: qcom-multimedia-proprietary-efi-sd-image
+      allowed: [qcom-multimedia-proprietary-efi-sd-image, qcom-minimal-efi-sd-image]
+kernel:
+  config: []
+  patches: []
+  device_tree:
+    files: []
+    patches: []
+  modules: []
+services: []
