@@ -104,3 +104,11 @@ devtool-managed `workspace/` layer.
 Offline parsing and QEMU checks do not establish physical-board behaviour.
 Attach boot, driver, and peripheral logs separately when making hardware
 claims.
+
+## HEVC performance validation
+
+`hevc-benchmark` provides a Q6A desktop/CLI app for 1080p30 hardware HEVC
+encode/decode latency, throughput and matched-frame Y-PSNR. Select it with
+`scripts/qcom-app image --app hevc-benchmark --machine radxa-dragon-q6a`
+to build the multimedia SD image. See [its README](hevc-benchmark/README.md)
+for measurement definitions, headless acceptance and evidence boundaries.

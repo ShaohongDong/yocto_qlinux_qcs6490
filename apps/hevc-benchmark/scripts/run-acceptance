@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -u
+output=${1:-hevc-acceptance}
+result=0
+for mode in encode decode loopback; do
+    hevc-benchmark --mode "$mode" --seconds 60 --warmup 5 --bitrate 8000000 --output "$output/$mode" || result=1
+done
+exit "$result"

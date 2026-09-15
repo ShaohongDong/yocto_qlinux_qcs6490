@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Run one controlled board trial; restore governors even on errors/cancellation."""
+import argparse
+import contextlib
+import os
+import struct
+import json
+from pathlib import Path
+import signal
+import subprocess
+import time
+
+
+class Governors:
+    def __init__(self, root=Path('/sys/devices/system/cpu/cpufreq')):
+        self.root = root
+        self.saved = {}
+
+    def __enter__(self):
+        return self
+
+    def enable_performance(self):
+        policies = sorted(self.root.glob('policy*'))
+        if not policies:
+            raise RuntimeError('No CPU frequency policies found')
+        for policy in policies:
+            path = policy / 'scaling_governor'
+            self.saved[path] = path.read_text().strip()
+            if 'performance' not in (policy / 'scaling_available_governors').read_text().split():
+                raise RuntimeError('Performance governor unavailable: ' + str(policy))
+            path.write_text('performance\n')
+            if path.read_text().strip() != 'performance':
+                raise RuntimeError('Governor did not change: ' + str(policy))
+
+    def __exit__(self, *args):
+        errors = []
+        for path, value in self.saved.items():
+            try:
+                path.write_text(value + '\n')
+                if path.read_text().strip() != value:
+                    raise RuntimeError('Governor restoration mismatch')
+            except Exception as error:
+                errors.append(str(path) + ': ' + str(error))
+        if errors:
+            raise RuntimeError('; '.join(errors))
+
+
+class VpuVote:
+    def __init__(self, hz, vote=Path('/sys/kernel/debug/msm_vidc/core_clock_voting'),
+                 dt=Path('/sys/firmware/devicetree/base/soc@0/video-codec@aa00000/opp-table')):
+        self.hz, self.vote, self.dt = hz, vote, dt
+        self.original = None
+
+    def __enter__(self):
+        if not self.hz:
+            return self
+        allowed = [struct.unpack('>Q', p.read_bytes())[0] for p in self.dt.glob('*/opp-hz')]
+        if self.hz not in allowed:
+            raise RuntimeError('VPU frequency is not in the running device tree OPP table')
+        # The driver vote is global: refuse to alter another codec session.
+        for p in Path('/proc').glob('[0-9]*/fd/*'):
+            try:
+                if str(p.resolve()) in ('/dev/video32', '/dev/video33'):
+                    raise RuntimeError('Another VPU session is open: ' + str(p))
+            except (PermissionError, FileNotFoundError):
+                pass
+        self.original = self.vote.read_text().strip()
+        try:
+            self.vote.write_text(str(self.hz) + '\n')
+            if int(self.vote.read_text()) != self.hz:
+                raise RuntimeError('VPU vote was not applied')
+        except BaseException:
+            self.__exit__()
+            raise
+        return self
+
+    def __exit__(self, *args):
+        if self.original is not None:
+            self.vote.write_text(self.original + '\n')
+            if self.vote.read_text().strip() != self.original:
+                raise RuntimeError('VPU vote restoration failed')
+
+
+class TraceCapture:
+    def __init__(self, output):
+        self.output = output
+        self.instance = Path('/sys/kernel/tracing/instances') / ('hevc-' + str(os.getpid()))
+
+    def __enter__(self):
+        self.instance.mkdir()
+        try:
+            (self.instance / 'tracing_on').write_text('0')
+            (self.instance / 'trace_clock').write_text('mono')
+            (self.instance / 'buffer_size_kb').write_text('2048')
+            for event in ('msm_vidc_events/msm_v4l2_vidc_buffer_event_log',
+                          'msm_vidc_events/msm_vidc_perf_power_scale',
+                          'v4l2/v4l2_qbuf', 'v4l2/v4l2_dqbuf',
+                          'v4l2/vb2_v4l2_buf_done', 'v4l2/vb2_v4l2_buf_queue'):
+                (self.instance / 'events' / event / 'enable').write_text('1')
+            (self.instance / 'tracing_on').write_text('1')
+        except BaseException:
+            (self.instance / 'tracing_on').write_text('0')
+            self.instance.rmdir()
+            raise
+        return self
+
+    def __exit__(self, *args):
+        try:
+            (self.instance / 'tracing_on').write_text('0')
+            (self.output / 'trace.txt').write_text((self.instance / 'trace').read_text())
+            stats = {}
+            for p in self.instance.glob('per_cpu/cpu*/stats'):
+                stats[p.parent.name] = p.read_text()
+            (self.output / 'trace-stats.json').write_text(json.dumps(stats, indent=2) + '\n')
+            for text in stats.values():
+                for line in text.splitlines():
+                    key, sep, value = line.partition(':')
+                    if sep and ('overrun' in key or 'dropped' in key) and int(value.strip()):
+                        raise RuntimeError('Trace buffer lost events; tracing result rejected')
+        finally:
+            self.instance.rmdir()
+
+
+def snapshot():
+    data = {'monotonic_seconds': time.monotonic(), 'cpu': {}, 'thermal': {}, 'vpu_clock_hz': {}}
+    try:
+        data['vpu_vote_hz'] = int(Path('/sys/kernel/debug/msm_vidc/core_clock_voting').read_text())
+    except OSError:
+        pass
+    for name in ('video_cc_mvsc_core_clk', 'video_cc_mvs0_core_clk'):
+        try:
+            data['vpu_clock_hz'][name] = int((Path('/sys/kernel/debug/clk') / name / 'clk_rate').read_text())
+        except (OSError, ValueError):
+            pass
+    for policy in sorted(Path('/sys/devices/system/cpu/cpufreq').glob('policy*')):
+        data['cpu'][policy.name] = {}
+        for name in ('scaling_governor', 'scaling_cur_freq', 'cpuinfo_cur_freq', 'scaling_max_freq'):
+            try:
+                data['cpu'][policy.name][name] = (policy / name).read_text().strip()
+            except OSError:
+                pass
+    for zone in sorted(Path('/sys/class/thermal').glob('thermal_zone*')):
+        try:
+            data['thermal'][zone.name] = {'type': (zone / 'type').read_text().strip(),
+                                          'millidegrees_c': int((zone / 'temp').read_text())}
+        except (OSError, ValueError):
+            pass
+    return data
+
+
+def require_safe_video_temperature(sample):
+    temperatures = [v['millidegrees_c'] for v in sample['thermal'].values()
+                    if v['type'] == 'video-thermal']
+    if not temperatures or not 0 <= max(temperatures) < 75000:
+        raise RuntimeError('VPU vote requires a readable video temperature below 75 C')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', default='hevc-benchmark')
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--performance', action='store_true')
+    parser.add_argument('--profile', choices=['baseline', 'low', 'encode-low', 'decode-low'], default='baseline')
+    parser.add_argument('--operating-rate', type=int, choices=[0, 30, 60, 120], default=0)
+    parser.add_argument('--mode', choices=['loopback', 'encode', 'decode'], default='loopback')
+    parser.add_argument('--pacing', choices=['auto', 'realtime', 'unpaced'], default='auto')
+    parser.add_argument('--quality', choices=['full', 'off'], default='full')
+    parser.add_argument('--input-nv12')
+    parser.add_argument('--vpu-hz', type=int, default=0)
+    parser.add_argument('--trace', action='store_true')
+    parser.add_argument('--seconds', type=int, default=60)
+    args = parser.parse_args()
+    if not 1 <= args.seconds <= 600:
+        parser.error('--seconds must be between 1 and 600')
+    args.output.mkdir(parents=True, exist_ok=False)
+    state = {'status': 'RUNNING', 'before': snapshot(), 'performance': args.performance,
+             'profile': args.profile, 'operating_rate': args.operating_rate, 'samples': []}
+    process = None
+    interrupted = False
+    timed_out = False
+    thermal_abort = False
+
+    def stop(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+        if process and process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, stop)
+    try:
+        with contextlib.ExitStack() as stack:
+            governors = stack.enter_context(Governors())
+            if args.vpu_hz:
+                require_safe_video_temperature(snapshot())
+            stack.enter_context(VpuVote(args.vpu_hz))
+            if args.trace:
+                stack.enter_context(TraceCapture(args.output))
+            if args.performance:
+                governors.enable_performance()
+            if interrupted:
+                raise RuntimeError('Interrupted before benchmark')
+            command = [args.binary, '--mode', args.mode, '--latency-profile', args.profile,
+                       '--operating-rate', str(args.operating_rate), '--seconds', str(args.seconds),
+                       '--warmup', '5', '--pacing', args.pacing, '--quality', args.quality,
+                       '--output', str(args.output / 'reports')]
+            if args.input_nv12:
+                command += ['--input-nv12', args.input_nv12]
+            state['vpu_requested_hz'] = args.vpu_hz
+            state['trace_enabled'] = args.trace
+            state['command'] = command
+            with (args.output / 'console.log').open('w') as log:
+                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+                deadline = time.monotonic() + args.seconds + 65
+                while process.poll() is None:
+                    sample = snapshot()
+                    state['samples'].append(sample)
+                    video_temps = [v['millidegrees_c'] for v in sample['thermal'].values() if v['type'] == 'video-thermal']
+                    thermal_abort = bool(args.vpu_hz and (not video_temps or max(video_temps) >= 75000))
+                    timed_out = time.monotonic() > deadline
+                    if interrupted or timed_out or thermal_abort:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        break
+                    time.sleep(1)
+                code = process.wait()
+                state['exit_code'] = code
+                state['status'] = 'CANCELLED' if interrupted else 'PASS' if code == 0 and not timed_out and not thermal_abort else 'FAIL'
+                state['timed_out'] = timed_out
+                state['thermal_abort'] = thermal_abort
+    except BaseException as error:
+        state['status'] = 'FAIL'
+        state['error'] = str(error)
+        raise
+    finally:
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        state['after'] = snapshot()
+        (args.output / 'trial.json').write_text(json.dumps(state, indent=2) + '\n')
+    return 0 if state['status'] == 'PASS' else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

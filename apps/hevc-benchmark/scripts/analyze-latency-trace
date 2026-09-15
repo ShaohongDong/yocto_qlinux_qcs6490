@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Correlate a short mono-clock VIDC trace with application frame intervals."""
+import argparse
+from collections import defaultdict
+import json
+from pathlib import Path
+import re
+import statistics
+
+
+def stats(values):
+    values = sorted(values)
+    return dict(count=len(values), mean=statistics.mean(values),
+                p95=values[min(len(values)-1, int(.95 * len(values)))], max=max(values)) if values else None
+
+
+def analyze(trial):
+    trace_stats = json.loads((trial / 'trace-stats.json').read_text())
+    for text in trace_stats.values():
+        for line in text.splitlines():
+            key, sep, value = line.partition(':')
+            if sep and ('overrun' in key or 'dropped' in key) and int(value.strip()):
+                raise ValueError('Trace lost events')
+    report = json.loads(next((trial / 'reports').glob('*/report.json')).read_text())
+    pattern = re.compile(r' (\d+\.\d+): msm_v4l2_vidc_buffer_event_log: (\w+): hevc([ED]): (qbuf|dqbuf): (INPUT|OUTPUT): .*? ts\s+(\d+) ')
+    events = defaultdict(list)
+    for line in (trial / 'trace.txt').read_text().splitlines():
+        m = pattern.search(line)
+        if m:
+            clock, session, codec, event, port, timestamp = m.groups()
+            events[codec].append(dict(ms=float(clock)*1000, session=session,
+                                     event=event, port=port, ts=int(timestamp)))
+    result = {'definition': 'Application sink -> driver qbuf (before cache/HFI submission) -> firmware response handler OUTPUT dqbuf -> application src. Middle interval includes driver/cache/firmware/IRQ, not pure VPU execution.',
+              'timestamp_mapping': 'Unique driver INPUT qbuf between application sink and the earlier of next sink/current src; then same session and driver timestamp OUTPUT dqbuf. No assumption that driver timestamp equals PTS.',
+              'codecs': {}}
+    for codec, prefix in (('E', 'encode'), ('D', 'decode')):
+        if not events[codec]:
+            continue
+        rows, misses, used = [], 0, set()
+        frames = sorted((f for f in report['frames'] if f[prefix+'_in_monotonic_ms'] is not None),
+                        key=lambda f: f[prefix+'_in_monotonic_ms'])
+        for index, frame in enumerate(frames):
+            begin, end = frame[prefix+'_in_monotonic_ms'], frame[prefix+'_out_monotonic_ms']
+            if begin is None or end is None:
+                continue
+            # The V4L2 element submits input synchronously before accepting its
+            # next sink frame. Restrict this window even when outputs overlap.
+            submit_end = min(end, frames[index+1][prefix+'_in_monotonic_ms']) if index+1 < len(frames) else end
+            submitted = [e for e in events[codec] if e['event']=='qbuf' and e['port']=='INPUT' and begin <= e['ms'] < submit_end]
+            if len(submitted) != 1:
+                misses += 1
+                continue
+            q = submitted[0]
+            done = [e for e in events[codec] if e['event']=='dqbuf' and e['port']=='OUTPUT' and e['session']==q['session'] and e['ts']==q['ts'] and q['ms'] <= e['ms'] <= end]
+            key = (q['session'], q['ts'])
+            if len(done) != 1 or key in used:
+                misses += 1
+                continue
+            used.add(key)
+            rows.append(dict(pts_ns=frame['pts_ns'], driver_timestamp=q['ts'], session=q['session'],
+                             submit_ms=q['ms']-begin, driver_firmware_ms=done[0]['ms']-q['ms'],
+                             delivery_ms=end-done[0]['ms']))
+        timeline = []
+        for e in events[codec]:
+            if e['port']=='INPUT' and e['event']=='qbuf':
+                timeline.append((e['ms'], 1))
+            if e['port']=='OUTPUT' and e['event']=='dqbuf':
+                timeline.append((e['ms'], -1))
+        inflight = peak = 0
+        for _, change in sorted(timeline):
+            inflight = max(0, inflight + change)
+            peak = max(peak, inflight)
+        result['codecs'][prefix] = dict(matched=len(rows), unmatched=misses,
+              peak_inflight_observed=peak,
+              segments_ms={k: stats([r[k] for r in rows]) for k in ('submit_ms','driver_firmware_ms','delivery_ms')}, frames=rows)
+    result['status'] = 'PASS' if result['codecs'] and all(c['matched'] and not c['unmatched'] for c in result['codecs'].values()) else 'INCOMPLETE'
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('trial', type=Path)
+    args = parser.parse_args()
+    result = analyze(args.trial)
+    (args.trial / 'trace-analysis.json').write_text(json.dumps(result, indent=2)+'\n')
+    print(json.dumps({k:v if k != 'codecs' else {n:{a:b for a,b in c.items() if a!='frames'} for n,c in v.items()} for k,v in result.items()}, indent=2))
+    return 0 if result['status']=='PASS' else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

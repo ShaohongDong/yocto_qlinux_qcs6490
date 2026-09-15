@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=HEVC 1080p30 Benchmark
+Comment=Hardware encode/decode latency and Y-PSNR
+Exec=hevc-benchmark --gui
+Icon=hevc-benchmark
+Terminal=false
+Categories=AudioVideo;Development;

@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: hevc-benchmark
+summary: Q6A 1080p30 hardware HEVC latency and Y-PSNR benchmark
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+inputs: [LICENSE, README.md, CMakeLists.txt, src, tests, data, scripts]
+build:
+  system: cmake
+  source: .
+  options: [-DBUILD_TESTING=OFF]
+check: [/usr/bin/hevc-benchmark, --self-test]
+dependencies:
+  build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base]
+  runtime:
+  - python3-core
+  - python3-json
+  - python3-statistics
+  - gstreamer1.0-plugins-good-video4linux2
+  - gstreamer1.0-plugins-bad-videoparsersbad
+  - gstreamer1.0-plugins-base-videotestsrc
+  - gstreamer1.0-plugins-base-videoconvertscale
+  - gstreamer1.0-plugins-base-app
+  - gstreamer1.0
+machines:
+  radxa-dragon-q6a:
+    kernel_providers: [linux-qcom]
+    images:
+      default: qcom-multimedia-proprietary-efi-sd-image
+      allowed: [qcom-multimedia-proprietary-efi-sd-image]
+kernel:
+  config: []
+  patches: []
+  device_tree:
+    files: []
+    patches: []
+  modules: []
+services: []

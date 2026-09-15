@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Alternate full-quality baseline/VPU candidate on three deterministic sources."""
+import argparse
+import json
+import math
+from pathlib import Path
+import statistics
+import subprocess
+import sys
+
+
+def paired_quality(a, b):
+    """Compare pooled error over exactly the same source frame indices."""
+    af = {f['source_index']: f for f in a['frames']}
+    bf = {f['source_index']: f for f in b['frames']}
+    common = sorted(af.keys() & bf.keys())
+    if len(common) < min(len(af), len(bf)) - 1 or not common:
+        raise ValueError('Insufficient matching source frame indices')
+    values = []
+    for frames in (af, bf):
+        squared = sum(frames[i]['y_squared_error'] for i in common)
+        pixels = sum(frames[i]['y_pixels'] for i in common)
+        if not pixels:
+            raise ValueError('Missing full-quality samples')
+        values.append(10 * math.log10(255**2 * pixels / squared) if squared else math.inf)
+    return dict(frames=len(common), first=common[0], last=common[-1],
+                baseline_psnr=values[0], candidate_psnr=values[1],
+                passed=values[1] >= values[0] - .5)
+
+
+def accepted(r):
+    return (r['status']=='PASS' and r['eos'] and r['quality_validated']
+            and r['quality_mode']=='full' and r['encode_fps'] >= 29.7 and r['decode_fps'] >= 29.7
+            and not any(r[k] for k in ('missing_encoded_frames','missing_decoded_frames',
+                       'missing_quality_frames','unmatched_timestamps','duplicate_timestamps','invalid_timing_frames')))
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--binary', required=True)
+    p.add_argument('--runner', default=str(Path(__file__).with_name('run-latency')))
+    p.add_argument('--inputs', type=Path, required=True)
+    p.add_argument('--candidate-hz', type=int, required=True)
+    p.add_argument('--output', type=Path, required=True)
+    args = p.parse_args()
+    args.output.mkdir(parents=True, exist_ok=False)
+    manifest = json.loads((args.inputs / 'manifest.json').read_text())
+    result = dict(status='RUNNING', candidate_hz=args.candidate_hz, trials=[], comparisons={})
+
+    def save():
+        (args.output/'summary.json').write_text(json.dumps(result, indent=2)+'\n')
+
+    def run(label, source, hz, seconds=60, mode='loopback', pacing='auto', trace=False, quality='full'):
+        target = args.output / label
+        cmd = [sys.executable,args.runner,'--binary',args.binary,'--profile','decode-low',
+               '--operating-rate','0' if mode=='encode' else '30','--performance','--seconds',str(seconds),'--mode',mode,
+               '--pacing',pacing,'--quality',quality,'--vpu-hz',str(hz),'--output',str(target)]
+        if source != 'ball':
+            cmd += ['--input-nv12', str(args.inputs / manifest['clips'][source]['file'])]
+        if trace:
+            cmd += ['--trace']
+        subprocess.run(cmd, check=True)
+        r = json.loads(next((target/'reports').glob('*/report.json')).read_text())
+        if source != 'ball' and r['input_sha256'] != manifest['clips'][source]['sha256']:
+            raise ValueError('Input digest mismatch')
+        entry = dict(label=label, source=source, hz=hz, status=r['status'],
+                     mean=r['source_to_decode_ms']['mean'], p95=r['source_to_decode_ms']['p95'])
+        result['trials'].append(entry); save(); print(json.dumps(entry), flush=True)
+        return r
+
+    try:
+        for source in ('ball','checkers','texture'):
+            baselines, candidates, quality = [], [], []
+            for repeat in range(3):
+                baseline = run(f'{source}-{repeat}-baseline',source,0)
+                candidate = run(f'{source}-{repeat}-candidate',source,args.candidate_hz)
+                if not accepted(baseline) or not accepted(candidate):
+                    raise ValueError('Frame accounting/full quality acceptance failed')
+                q = paired_quality(baseline,candidate)
+                if not q['passed']:
+                    raise ValueError('Paired quality regression')
+                quality.append(q); baselines.append(baseline); candidates.append(candidate)
+            comparison = dict(quality=quality)
+            for key in ('mean','p95'):
+                comparison['baseline_'+key] = statistics.median(r['source_to_decode_ms'][key] for r in baselines)
+                comparison['candidate_'+key] = statistics.median(r['source_to_decode_ms'][key] for r in candidates)
+            comparison['p95_gain_ms'] = comparison['baseline_p95']-comparison['candidate_p95']
+            comparison['regression'] = comparison['p95_gain_ms'] < -1
+            result['comparisons'][source]=comparison; save()
+        result['recommended'] = (not any(c['regression'] for c in result['comparisons'].values())
+                                 and any(c['p95_gain_ms'] >= 1 for c in result['comparisons'].values()))
+        if not result['recommended']:
+            result['status']='NO_GENERAL_WINNER'; save(); return 0
+        soak = run('soak-ball', 'ball', args.candidate_hz, 600)
+        reference = json.loads(next((args.output/'ball-0-baseline/reports').glob('*/report.json')).read_text())
+        # Restrict soak to the same source frame segment as the short reference.
+        segment = dict(soak, frames=[f for f in soak['frames'] if f['source_index'] <= reference['frames'][-1]['source_index']])
+        result['soak_quality'] = paired_quality(reference, segment)
+        if not accepted(soak) or not result['soak_quality']['passed']:
+            raise ValueError('Soak acceptance failed')
+        for mode in ('encode','decode'):
+            run('independent-'+mode,'ball',args.candidate_hz,60,mode,'realtime')
+        result['status']='PASS'
+    except BaseException as error:
+        result['status']='FAIL'; result['error']=str(error); raise
+    finally:
+        save()
+    return 0
+
+
+if __name__=='__main__':
+    raise SystemExit(main())

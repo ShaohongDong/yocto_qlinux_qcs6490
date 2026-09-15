@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Screen, repeat, and soak HEVC latency configurations on the target board."""
+import argparse
+import json
+import math
+from pathlib import Path
+import statistics
+import subprocess
+import sys
+
+
+def eligible(report, baseline):
+    return (report['status'] == 'PASS' and report['eos']
+            and report.get('quality_mode', 'full') == 'full'
+            and report.get('quality_validated', True)
+            and report['encode_fps'] >= 29.7 and report['decode_fps'] >= 29.7
+            and all(report[k] == 0 for k in ('missing_encoded_frames', 'missing_decoded_frames',
+                       'missing_quality_frames', 'unmatched_timestamps', 'duplicate_timestamps',
+                       'invalid_timing_frames'))
+            and report['y_psnr_from_pooled_mse_db'] >= baseline['y_psnr_from_pooled_mse_db'] - 0.5)
+
+
+def select(entries, limit=1):
+    """Treat sub-ms differences as ties, then prefer lower performance demand."""
+    entries = list(entries)
+    selected = []
+    while entries and len(selected) < limit:
+        best_p95 = min(e['p95'] for e in entries)
+        pool = [e for e in entries if e['p95'] < best_p95 + 1]
+        best_mean = min(e['mean'] for e in pool)
+        pool = [e for e in pool if e['mean'] < best_mean + 1]
+        best = min(pool, key=lambda e: (e['performance'], e['rate'], e['profile'] != 'baseline', e['mean']))
+        selected.append(best)
+        entries.remove(best)
+    return selected
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', required=True)
+    parser.add_argument('--runner', default=str(Path(__file__).with_name('run-latency' if Path(__file__).name == 'run-latency-matrix' else 'hevc-benchmark-latency')))
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--resume-screen', action='store_true', help='Reuse only completed initial four screening trials')
+    args = parser.parse_args()
+    args.output.mkdir(exist_ok=args.resume_screen, parents=True)
+    history = []
+
+    def run(label, config, seconds=60, mode='loopback', reuse=False):
+        target = args.output / label
+        command = [sys.executable, args.runner, '--binary', args.binary, '--profile', config['profile'],
+                   '--operating-rate', str(config['rate'] if mode != 'encode' else 0),
+                   '--seconds', str(seconds), '--mode', mode, '--output', str(target)]
+        if config['performance']:
+            command.append('--performance')
+        if not (reuse and (target / 'trial.json').exists()):
+            result = subprocess.run(command)
+            print(label, 'exit', result.returncode, flush=True)
+        reports = list((target / 'reports').glob('*/report.json'))
+        if len(reports) != 1:
+            raise RuntimeError('Missing/ambiguous report: ' + str(target))
+        r = json.loads(reports[0].read_text())
+        t = json.loads((target / 'trial.json').read_text())
+        if t['status'] != 'PASS':
+            r['status'] = 'FAIL'
+        entry = dict(config, label=label, report=str(reports[0]), status=r['status'],
+                     mean=r['source_to_decode_ms']['mean'], p95=r['source_to_decode_ms']['p95'],
+                     psnr=r['y_psnr_from_pooled_mse_db'], bitrate=r['actual_encoded_bitrate'])
+        history.append(entry)
+        (args.output / 'matrix.json').write_text(json.dumps(history, indent=2) + '\n')
+        print(json.dumps(entry), flush=True)
+        return entry, r
+
+    base = dict(profile='baseline', performance=False, rate=0)
+    baseline_entry, baseline = run('screen-baseline', base, reuse=args.resume_screen)
+    if baseline['status'] != 'PASS':
+        raise RuntimeError('Baseline failed')
+    candidates = [baseline_entry]
+    for profile in ('encode-low', 'decode-low', 'low'):
+        e, r = run('screen-' + profile, dict(base, profile=profile), reuse=args.resume_screen)
+        if eligible(r, baseline):
+            candidates.append(e)
+    # Retain the lowest numeric P95 control setting for the performance sweep;
+    # final selection still uses the defined sub-ms tie policy.
+    control = min(candidates, key=lambda e: e['p95'])
+    config = {k: control[k] for k in ('profile', 'performance', 'rate')}
+    for rate in (0, 30, 60, 120):
+        for performance in (True,):
+            cfg = dict(config, performance=performance, rate=rate)
+            e, r = run(f'screen-perf{int(performance)}-rate{rate}', cfg)
+            if eligible(r, baseline):
+                candidates.append(e)
+    top = select([e for e in candidates if e['label'] != 'screen-baseline'], 2)
+    configs = [base] + [{k: e[k] for k in ('profile', 'performance', 'rate')} for e in top]
+    repeated = [[] for _ in configs]
+    for repeat in range(3):
+        order = range(len(configs)) if repeat % 2 == 0 else reversed(range(len(configs)))
+        round_results = {}
+        for index in order:
+            round_results[index] = run(f'repeat-{repeat}-{index}', configs[index])
+        reference = round_results[0][1]
+        if reference['status'] != 'PASS':
+            raise RuntimeError('Repeated baseline failed')
+        for index in range(len(configs)):
+            e, r = round_results[index]
+            e['eligible'] = eligible(r, reference)
+            repeated[index].append(e)
+    ranked = []
+    for cfg, trials in zip(configs, repeated):
+        if all(t['eligible'] for t in trials):
+            ranked.append(dict(cfg, p95=statistics.median(t['p95'] for t in trials),
+                               mean=statistics.median(t['mean'] for t in trials)))
+    if not ranked:
+        raise RuntimeError('No stable eligible configuration')
+    winner = select(ranked)[0]
+    (args.output / 'selection.json').write_text(json.dumps({'winner': winner, 'repeated': repeated,
+                                                          'ranked': ranked}, indent=2) + '\n')
+    _, soak = run('soak', winner, seconds=600)
+    # Compare the same first 60-second source segment. All NV12 luma samples
+    # contain the same number of pixels, so averaging frame MSE is pooled MSE.
+    first_segment = [f for f in soak['frames'] if f['y_psnr_db'] is not None][:1800]
+    mse = statistics.mean(0 if f['y_psnr_db'] == 'Infinity' else
+                          255**2 * 10**(-f['y_psnr_db'] / 10) for f in first_segment)
+    quality_check = dict(soak, y_psnr_from_pooled_mse_db=10 * math.log10(255**2 / mse) if mse else float('inf'))
+    passed = len(first_segment) == 1800 and eligible(quality_check, baseline)
+    for mode in ('encode', 'decode'):
+        _, r = run('regression-' + mode, winner, mode=mode)
+        passed &= r['status'] == 'PASS'
+    (args.output / 'result.json').write_text(json.dumps({'status': 'PASS' if passed else 'FAIL',
+        'winner': winner, 'baseline': ranked[0] if ranked else None}, indent=2) + '\n')
+    return 0 if passed else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

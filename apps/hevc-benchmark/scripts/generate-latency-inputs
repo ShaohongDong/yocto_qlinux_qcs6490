@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Generate deterministic 60-frame, 1080p NV12 diagnostic clips offline."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import random
+
+
+def row(kind, y, frame, texture):
+    sy = (y + frame * 7) % 1080
+    if kind == 'checkers':
+        shift = frame * 13
+        return bytes(32 if ((x + shift) // 8 + sy // 8) % 2 else 220 for x in range(1920))
+    tiles = texture[(sy // 8) % 135]
+    expanded = bytes(v for v in tiles for _ in range(8))
+    shift = (frame * 13) % 1920
+    return expanded[shift:] + expanded[:shift]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(20260915)
+    texture = [[rng.randrange(16, 236) for _ in range(240)] for _ in range(135)]
+    metadata = dict(width=1920, height=1080, frames=60, fps=30, format='NV12',
+                    colorimetry='bt709', seed=20260915, block_size=8,
+                    translation_x_per_frame=13, translation_y_per_frame=7, clips={})
+    chroma = bytes([128]) * (1920 * 1080 // 2)
+    for kind in ('checkers', 'texture'):
+        target = args.output / (kind + '.nv12')
+        digest = hashlib.sha256()
+        with target.open('xb') as out:
+            for frame in range(60):
+                # Cache the small set of repeated horizontal rows per frame.
+                rows = {}
+                for y in range(1080):
+                    key = ((y + frame * 7) % 1080) // 8
+                    if key not in rows:
+                        rows[key] = row(kind, y, frame, texture)
+                    out.write(rows[key]); digest.update(rows[key])
+                out.write(chroma); digest.update(chroma)
+        metadata['clips'][kind] = {'file': target.name, 'sha256': digest.hexdigest(),
+                                    'bytes': target.stat().st_size}
+    (args.output / 'manifest.json').write_text(json.dumps(metadata, indent=2) + '\n')
+
+
+if __name__ == '__main__':
+    main()
