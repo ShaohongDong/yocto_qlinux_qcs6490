@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+app_root=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd -P)
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${XDG_RUNTIME_DIR:-/var/lib/q6a-ai-demo}/ai-demo-cache}"
+mkdir -p "$XDG_CACHE_HOME"
+export LD_LIBRARY_PATH="$app_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export ADSP_LIBRARY_PATH="$app_root/dsp;/usr/share/qcom/qcm6490/Thundercomm/RB3gen2/dsp/cdsp${ADSP_LIBRARY_PATH:+;$ADSP_LIBRARY_PATH}"
+exec "$app_root/bin/ai-demo" --model "$app_root/share/ai-demo/models/yolov8n.bin" --dsp-dir "$app_root/dsp" "$@"

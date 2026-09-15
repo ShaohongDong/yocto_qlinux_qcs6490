@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Q6A AI Demo
+Comment=Offline NPU object detection
+Exec=ai-demo --gui
+Icon=ai-demo
+Terminal=false
+Categories=Graphics;Education;
