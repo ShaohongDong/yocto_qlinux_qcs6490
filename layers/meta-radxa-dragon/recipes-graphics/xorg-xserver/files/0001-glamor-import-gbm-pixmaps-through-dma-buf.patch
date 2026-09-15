@@ -1,0 +1,291 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] glamor: import GBM pixmaps through dma-buf when native import fails
+
+Adreno EGL on Q6A advertises dma-buf import but not EGL_KHR_image_pixmap.
+Importing a GBM BO as EGL_NATIVE_PIXMAP_KHR returns EGL_BAD_PARAMETER,
+preventing modesetting from creating the accelerated screen pixmap.
+The same buffer imports successfully using EGL_LINUX_DMA_BUF_EXT.
+
+Keep native import for existing drivers and add the standard dma-buf
+path with plane offsets, strides and explicit modifiers. Close exported
+file descriptors on failure and retain them for the pixmap lifetime on
+success. Preserve the DMA-BUF metadata for DRI3 export: MSM GBM does not
+implement GBM_BO_IMPORT_EGL_IMAGE, so re-export must use the retained
+DMA-BUF instead. Swap and release this metadata with the EGL image.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/glamor/glamor_egl.c
++++ b/glamor/glamor_egl.c
+@@ -159,9 +159,33 @@
+     return TRUE;
+ }
+ 
++/* Retain the original dma-buf metadata: some GBM backends cannot import
++ * EGLImage objects to re-export a pixmap for DRI3/texture-from-pixmap.
++ */
++struct glamor_egl_dmabuf {
++    uint32_t width, height, format;
++    int num_fds;
++    int fds[4];
++    uint32_t strides[4], offsets[4];
++    uint64_t modifier;
++};
++
++static void
++glamor_egl_free_dmabuf(struct glamor_egl_dmabuf *dmabuf)
++{
++    int i;
++    if (!dmabuf)
++        return;
++    for (i = 0; i < dmabuf->num_fds; i++)
++        if (dmabuf->fds[i] >= 0)
++            close(dmabuf->fds[i]);
++    free(dmabuf);
++}
++
+ static void
+ glamor_egl_set_pixmap_image(PixmapPtr pixmap, EGLImageKHR image,
+-                            Bool used_modifiers)
++                            Bool used_modifiers,
++                            struct glamor_egl_dmabuf *dmabuf)
+ {
+     struct glamor_pixmap_private *pixmap_priv =
+         glamor_get_pixmap_private(pixmap);
+@@ -175,6 +199,8 @@
+ 
+         eglDestroyImageKHR(glamor_egl->display, old);
+     }
++    glamor_egl_free_dmabuf(pixmap_priv->dmabuf);
++    pixmap_priv->dmabuf = dmabuf;
+     pixmap_priv->image = image;
+     pixmap_priv->used_modifiers = used_modifiers;
+ }
+@@ -214,6 +240,106 @@
+     return TRUE;
+ }
+ 
++/* EGL_NATIVE_PIXMAP_KHR on GBM is not supported by every EGL vendor.
++ * Import the buffer through the standard dma-buf interface when necessary.
++ */
++static EGLImageKHR
++glamor_egl_image_from_dmabuf(EGLDisplay display, struct gbm_bo *bo,
++                           Bool used_modifiers,
++                           struct glamor_egl_dmabuf **ret_dmabuf)
++{
++    static const EGLint fd_keys[] = {
++        EGL_DMA_BUF_PLANE0_FD_EXT, EGL_DMA_BUF_PLANE1_FD_EXT,
++        EGL_DMA_BUF_PLANE2_FD_EXT, EGL_DMA_BUF_PLANE3_FD_EXT
++    };
++    static const EGLint offset_keys[] = {
++        EGL_DMA_BUF_PLANE0_OFFSET_EXT, EGL_DMA_BUF_PLANE1_OFFSET_EXT,
++        EGL_DMA_BUF_PLANE2_OFFSET_EXT, EGL_DMA_BUF_PLANE3_OFFSET_EXT
++    };
++    static const EGLint pitch_keys[] = {
++        EGL_DMA_BUF_PLANE0_PITCH_EXT, EGL_DMA_BUF_PLANE1_PITCH_EXT,
++        EGL_DMA_BUF_PLANE2_PITCH_EXT, EGL_DMA_BUF_PLANE3_PITCH_EXT
++    };
++    EGLint attrs[6 + 4 * 10 + 1];
++    struct glamor_egl_dmabuf *dmabuf;
++    int planes = 1, n = 0, plane;
++    EGLImageKHR image = EGL_NO_IMAGE_KHR;
++
++    if (!epoxy_has_egl_extension(display, "EGL_EXT_image_dma_buf_import"))
++        return image;
++#ifdef GBM_BO_FD_FOR_PLANE
++    planes = gbm_bo_get_plane_count(bo);
++#endif
++    if (planes < 1 || planes > 4)
++        return image;
++    if (used_modifiers &&
++        !epoxy_has_egl_extension(display, "EGL_EXT_image_dma_buf_import_modifiers"))
++        return image;
++
++    dmabuf = calloc(1, sizeof(*dmabuf));
++    if (!dmabuf)
++        return image;
++    dmabuf->width = gbm_bo_get_width(bo);
++    dmabuf->height = gbm_bo_get_height(bo);
++    dmabuf->format = gbm_bo_get_format(bo);
++    dmabuf->num_fds = planes;
++    dmabuf->modifier = DRM_FORMAT_MOD_INVALID;
++#ifdef GBM_BO_WITH_MODIFIERS
++    if (used_modifiers)
++        dmabuf->modifier = gbm_bo_get_modifier(bo);
++#endif
++    for (plane = 0; plane < planes; plane++)
++        dmabuf->fds[plane] = -1;
++
++    attrs[n++] = EGL_WIDTH;
++    attrs[n++] = gbm_bo_get_width(bo);
++    attrs[n++] = EGL_HEIGHT;
++    attrs[n++] = gbm_bo_get_height(bo);
++    attrs[n++] = EGL_LINUX_DRM_FOURCC_EXT;
++    attrs[n++] = gbm_bo_get_format(bo);
++    for (plane = 0; plane < planes; plane++) {
++#ifdef GBM_BO_FD_FOR_PLANE
++        dmabuf->fds[plane] = gbm_bo_get_fd_for_plane(bo, plane);
++#else
++        dmabuf->fds[plane] = gbm_bo_get_fd(bo);
++#endif
++        if (dmabuf->fds[plane] < 0)
++            goto out;
++        attrs[n++] = fd_keys[plane];
++        attrs[n++] = dmabuf->fds[plane];
++        attrs[n++] = offset_keys[plane];
++#ifdef GBM_BO_FD_FOR_PLANE
++        attrs[n++] = dmabuf->offsets[plane] = gbm_bo_get_offset(bo, plane);
++#else
++        attrs[n++] = 0;
++#endif
++        attrs[n++] = pitch_keys[plane];
++#ifdef GBM_BO_FD_FOR_PLANE
++        attrs[n++] = dmabuf->strides[plane] = gbm_bo_get_stride_for_plane(bo, plane);
++#else
++        attrs[n++] = dmabuf->strides[plane] = gbm_bo_get_stride(bo);
++#endif
++#ifdef GBM_BO_WITH_MODIFIERS
++        if (used_modifiers) {
++            uint64_t modifier = gbm_bo_get_modifier(bo);
++            attrs[n++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT + plane * 2;
++            attrs[n++] = modifier & 0xffffffff;
++            attrs[n++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT + plane * 2;
++            attrs[n++] = modifier >> 32;
++        }
++#endif
++    }
++    attrs[n] = EGL_NONE;
++    image = eglCreateImageKHR(display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
++                              NULL, attrs);
++out:
++    if (image == EGL_NO_IMAGE_KHR)
++        glamor_egl_free_dmabuf(dmabuf);
++    else
++        *ret_dmabuf = dmabuf;
++    return image;
++}
++
+ Bool
+ glamor_egl_create_textured_pixmap_from_gbm_bo(PixmapPtr pixmap,
+                                               struct gbm_bo *bo,
+@@ -225,6 +351,7 @@
+         glamor_get_screen_private(screen);
+     struct glamor_egl_screen_private *glamor_egl;
+     EGLImageKHR image;
++    struct glamor_egl_dmabuf *dmabuf = NULL;
+     GLuint texture;
+     Bool ret = FALSE;
+ 
+@@ -232,9 +359,14 @@
+ 
+     glamor_make_current(glamor_priv);
+ 
+-    image = eglCreateImageKHR(glamor_egl->display,
+-                              EGL_NO_CONTEXT,
+-                              EGL_NATIVE_PIXMAP_KHR, bo, NULL);
++    image = EGL_NO_IMAGE_KHR;
++    if (epoxy_has_egl_extension(glamor_egl->display, "EGL_KHR_image_pixmap"))
++        image = eglCreateImageKHR(glamor_egl->display,
++                                  EGL_NO_CONTEXT,
++                                  EGL_NATIVE_PIXMAP_KHR, bo, NULL);
++    if (image == EGL_NO_IMAGE_KHR)
++        image = glamor_egl_image_from_dmabuf(glamor_egl->display, bo,
++                                            used_modifiers, &dmabuf);
+     if (image == EGL_NO_IMAGE_KHR) {
+         glamor_set_pixmap_type(pixmap, GLAMOR_DRM_ONLY);
+         goto done;
+@@ -242,7 +374,7 @@
+     glamor_create_texture_from_image(screen, image, &texture);
+     glamor_set_pixmap_type(pixmap, GLAMOR_TEXTURE_DRM);
+     glamor_set_pixmap_texture(pixmap, texture);
+-    glamor_egl_set_pixmap_image(pixmap, image, used_modifiers);
++    glamor_egl_set_pixmap_image(pixmap, image, used_modifiers, dmabuf);
+     ret = TRUE;
+ 
+  done:
+@@ -381,6 +513,38 @@
+     if (!pixmap_priv->image)
+         return NULL;
+ 
++    if (pixmap_priv->dmabuf) {
++        struct glamor_egl_dmabuf *dmabuf = pixmap_priv->dmabuf;
++#ifdef GBM_BO_WITH_MODIFIERS
++        if (dmabuf->modifier != DRM_FORMAT_MOD_INVALID) {
++            struct gbm_import_fd_modifier_data data = { 0 };
++            int i;
++            data.width = dmabuf->width;
++            data.height = dmabuf->height;
++            data.format = dmabuf->format;
++            data.num_fds = dmabuf->num_fds;
++            data.modifier = dmabuf->modifier;
++            for (i = 0; i < dmabuf->num_fds; i++) {
++                data.fds[i] = dmabuf->fds[i];
++                data.strides[i] = dmabuf->strides[i];
++                data.offsets[i] = dmabuf->offsets[i];
++            }
++            return gbm_bo_import(glamor_egl->gbm, GBM_BO_IMPORT_FD_MODIFIER,
++                                 &data, 0);
++        }
++#endif
++        if (dmabuf->num_fds == 1 && dmabuf->offsets[0] == 0) {
++            struct gbm_import_fd_data data = { 0 };
++            data.fd = dmabuf->fds[0];
++            data.width = dmabuf->width;
++            data.height = dmabuf->height;
++            data.stride = dmabuf->strides[0];
++            data.format = dmabuf->format;
++            return gbm_bo_import(glamor_egl->gbm, GBM_BO_IMPORT_FD, &data, 0);
++        }
++        return NULL;
++    }
++
+     return gbm_bo_import(glamor_egl->gbm, GBM_BO_IMPORT_EGL_IMAGE,
+                          pixmap_priv->image, 0);
+ }
+@@ -770,6 +934,8 @@
+ 
+         if (pixmap_priv->image)
+             eglDestroyImageKHR(glamor_egl->display, pixmap_priv->image);
++        glamor_egl_free_dmabuf(pixmap_priv->dmabuf);
++        pixmap_priv->dmabuf = NULL;
+     }
+ 
+     screen->DestroyPixmap = glamor_egl->saved_destroy_pixmap;
+@@ -784,6 +950,7 @@
+ glamor_egl_exchange_buffers(PixmapPtr front, PixmapPtr back)
+ {
+     EGLImageKHR temp_img;
++    struct glamor_egl_dmabuf *temp_dmabuf;
+     Bool temp_mod;
+     struct glamor_pixmap_private *front_priv =
+         glamor_get_pixmap_private(front);
+@@ -792,6 +959,9 @@
+ 
+     glamor_pixmap_exchange_fbos(front, back);
+ 
++    temp_dmabuf = back_priv->dmabuf;
++    back_priv->dmabuf = front_priv->dmabuf;
++    front_priv->dmabuf = temp_dmabuf;
+     temp_img = back_priv->image;
+     temp_mod = back_priv->used_modifiers;
+     back_priv->image = front_priv->image;
+@@ -818,6 +988,8 @@
+ 
+     eglDestroyImageKHR(glamor_egl->display, pixmap_priv->image);
+     pixmap_priv->image = NULL;
++    glamor_egl_free_dmabuf(pixmap_priv->dmabuf);
++    pixmap_priv->dmabuf = NULL;
+ 
+     screen->CloseScreen = glamor_egl->saved_close_screen;
+ 
+--- a/glamor/glamor_priv.h
++++ b/glamor/glamor_priv.h
+@@ -392,6 +392,7 @@
+     Bool prepared;
+ #ifdef GLAMOR_HAS_GBM
+     EGLImageKHR image;
++    struct glamor_egl_dmabuf *dmabuf;
+     Bool used_modifiers;
+ #endif
+     /** block width of this large pixmap. */

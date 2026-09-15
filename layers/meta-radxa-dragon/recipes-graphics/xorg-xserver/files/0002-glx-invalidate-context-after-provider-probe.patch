@@ -1,0 +1,29 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] glx: invalidate cached GL context after provider probing
+
+Mesa DRIL queries configurations through a temporary EGL display. On
+Adreno, terminating that display changes GL dispatch even while the
+original context remains reported as current. Glamor then uses stale
+dispatch because lastGLContext still matches its context, resulting in
+invalid shader objects and incomplete framebuffers.
+
+Invalidate the context cache after every provider probe, so the next
+glamor operation performs its existing unbind/rebind sequence.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/glx/glxext.c
++++ b/glx/glxext.c
+@@ -548,6 +548,11 @@
+ 
+         for (p = __glXProviderStack; p != NULL; p = p->next) {
+             __GLXscreen *glxScreen = p->screenProbe(pScreen);
++            /* Provider probing can initialize and terminate a temporary EGL
++             * display, changing GL dispatch outside the context cache.
++             * Make glamor rebind its context before its next operation.
++             */
++            lastGLContext = NULL;
+             if (glxScreen != NULL) {
+                 LogMessage(X_INFO,
+                            "GLX: Initialized %s GL provider for screen %d\n",

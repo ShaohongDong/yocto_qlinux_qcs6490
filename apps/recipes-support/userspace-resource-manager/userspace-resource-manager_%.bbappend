@@ -9,3 +9,11 @@ do_install:append() {
         printf '\n%s\n' weston-start.sh weston weston-desktop- wifi-test >> ${D}${sysconfdir}/urm/classifier/classifier-blocklist.txt
     fi
 }
+
+# Preserve the active logind seat for the XFCE launch chain and applications.
+do_install:append:radxa-dragon-q6a() {
+    printf '\n%s\n' qcom-xfce-start qcom-xfce-sessi xinit Xorg dbus-run-sessio \
+        xfce4-session xfwm4 xfce4-panel xfdesktop Thunar xfce4-terminal \
+        wifi-test gpu-benchmark hevc-benchmark ai-demo \
+        >> ${D}${sysconfdir}/urm/classifier/classifier-blocklist.txt
+}

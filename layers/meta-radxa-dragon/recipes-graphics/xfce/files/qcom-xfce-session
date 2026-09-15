@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+unset WAYLAND_DISPLAY
+export GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb
+# GTK3 X11 uses GLX. Zink provides hardware GLX through Adreno Vulkan;
+# Xorg itself keeps the native Adreno EGL/GLES glamor context.
+export MESA_LOADER_DRIVER_OVERRIDE=zink GALLIUM_DRIVER=zink
+# Use desktop GL for GTK's shared GLX painting context on X11.
+export GDK_GL=""
+# Keep the selected non-composited XFCE session; Xorg drawing uses glamor.
+xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s false
+# Match the existing Q6A HDMI workaround for sinks with broken deep color.
+xrandr --query | awk '/^HDMI[^ ]* connected/ {print $1}' | while read -r output; do
+    xrandr --output "$output" --set 'max bpc' 8 || true
+done
+exec xfce4-session

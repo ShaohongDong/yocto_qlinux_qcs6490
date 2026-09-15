@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+auth      required  pam_nologin.so
+auth      required  pam_unix.so try_first_pass nullok
+account   required  pam_nologin.so
+account   required  pam_unix.so
+session   required  pam_env.so
+session   required  pam_unix.so
+-session  optional  pam_systemd.so type=x11 class=user desktop=xfce
+-session  optional  pam_loginuid.so

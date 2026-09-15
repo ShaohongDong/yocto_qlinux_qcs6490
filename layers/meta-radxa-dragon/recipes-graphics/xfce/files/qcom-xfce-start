@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+install -d -m 0700 "$XDG_RUNTIME_DIR/qcom-xfce"
+export XAUTHORITY="$XDG_RUNTIME_DIR/qcom-xfce/Xauthority"
+umask 077
+touch "$XAUTHORITY"
+xauth -f "$XAUTHORITY" add :0 . "$(mcookie)"
+unset WAYLAND_DISPLAY
+export DISPLAY=:0
+exec xinit /usr/bin/dbus-run-session /usr/bin/qcom-xfce-session -- \
+    /usr/bin/Xorg :0 vt7 -keeptty -logfile "$XDG_RUNTIME_DIR/qcom-xfce/Xorg.0.log" \
+    -nolisten tcp -s 0 -dpms -auth "$XAUTHORITY"

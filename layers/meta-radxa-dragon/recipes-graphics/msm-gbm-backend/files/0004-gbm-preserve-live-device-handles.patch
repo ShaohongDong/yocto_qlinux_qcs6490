@@ -1,0 +1,136 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] gbm: preserve live buffer handles when another device is destroyed
+
+The GEM handle map is global, but device destruction closes every handle
+through the device being destroyed. Xorg's GLX initialization can create
+and destroy a temporary GBM device while glamor still owns its scanout BO.
+This closes glamor's live GEM handle and subsequent dma-buf export fails
+with ENOENT.
+
+Release handles when the last BO reference is destroyed, as required by
+the GBM object lifetime contract. Include the DRM fd in the map key so
+independent DRM connections do not alias their numeric handles. Initialize
+the global mutex once rather than reinitializing it for each device.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/src/gbm_msm.c
++++ b/src/gbm_msm.c
+@@ -39,7 +39,7 @@
+ #  define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+ #endif
+ 
+-pthread_mutex_t gem_handle_mutex;
++static pthread_mutex_t gem_handle_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+ #define LOCK(mutex) pthread_mutex_lock(&mutex)
+ #define UNLOCK(mutex) pthread_mutex_unlock(&mutex)
+@@ -71,11 +71,12 @@
+    return (struct gbm_msm_surface *) surf;
+ }
+ 
+-static void add_gem_handle(uint32_t handle)
++static void add_gem_handle(struct gbm_msm_device *msm_dev, uint32_t handle)
+ {
+    LOCK(gem_handle_mutex);
+    for (size_t i = 0; i < map.size; i++) {
+-      if (map.handles[i].handle == handle) {
++      if (map.handles[i].fd == msm_dev->base.v0.fd &&
++          map.handles[i].handle == handle) {
+          map.handles[i].refcount++;
+          UNLOCK(gem_handle_mutex);
+          return;
+@@ -89,6 +90,7 @@
+       exit(EXIT_FAILURE);
+    }
+ 
++   map.handles[map.size].fd = msm_dev->base.v0.fd;
+    map.handles[map.size].handle = handle;
+    map.handles[map.size].refcount = 1;
+    map.size++;
+@@ -103,7 +105,8 @@
+ 
+    LOCK(gem_handle_mutex);
+    for (size_t i = 0; i < map.size; i++) {
+-      if (map.handles[i].handle != handle) {
++      if (map.handles[i].fd != msm_dev->base.v0.fd ||
++          map.handles[i].handle != handle) {
+          continue;
+       }
+       if (--map.handles[i].refcount > 0) {
+@@ -126,17 +129,6 @@
+       break;
+    }
+ 
+-   UNLOCK(gem_handle_mutex);
+-}
+-
+-static void free_gem_handle_map(struct gbm_msm_device *msm_dev)
+-{
+-   LOCK(gem_handle_mutex);
+-   for (size_t i = 0; i < map.size; i++) {
+-      free_buffer(msm_dev, map.handles[i].handle);
+-   }
+-
+-   free(map.handles);
+    UNLOCK(gem_handle_mutex);
+ }
+ 
+@@ -319,7 +311,7 @@
+    if (allocate_buffer(msm_dev, size, usage, &(bo->base.v0.handle.u32)) != 0)
+       return NULL;
+ 
+-   add_gem_handle(bo->base.v0.handle.u32);
++   add_gem_handle(msm_dev, bo->base.v0.handle.u32);
+ 
+    if (get_stride(&bufdesc, 0, &(bo->base.v0.stride)) != 0)
+       return NULL;
+@@ -358,7 +350,7 @@
+       }
+ 
+       bo->base.v0.handle.u32 = handle;
+-      add_gem_handle(handle);
++      add_gem_handle(msm_dev, handle);
+       bo->base.gbm = gbm;
+       bo->base.v0.width = fd_data->width;
+       bo->base.v0.height = fd_data->height;
+@@ -393,7 +385,7 @@
+       }
+ 
+       bo->base.v0.handle.u32 = handle;
+-      add_gem_handle(handle);
++      add_gem_handle(msm_dev, handle);
+       bo->base.gbm = gbm;
+       bo->base.v0.width = fd_modifer_data->width;
+       bo->base.v0.height = fd_modifer_data->height;
+@@ -554,7 +546,9 @@
+    struct gbm_msm_device *msm_dev = gbm_msm_device(gbm);
+    if(msm_dev == NULL)
+       return;
+-   free_gem_handle_map(msm_dev);
++   /* BOs must be destroyed before their device. Other devices may still
++    * own BOs in the shared handle table, including on this DRM fd.
++    */
+    free(msm_dev);
+    msm_dev = NULL;
+ }
+@@ -768,8 +762,6 @@
+ 
+    msm->base.v0.name = "msm";
+ 
+-   pthread_mutex_init(&gem_handle_mutex, NULL);
+-
+    return &msm->base;
+ }
+ 
+--- a/src/gbm_msm_int.h
++++ b/src/gbm_msm_int.h
+@@ -17,6 +17,7 @@
+ };
+ 
+ struct gem_handle_ref {
++    int fd;                // DRM file descriptor owning the handle
+     uint32_t handle;        // The GEM handle
+     int refcount;      // Reference count
+ };

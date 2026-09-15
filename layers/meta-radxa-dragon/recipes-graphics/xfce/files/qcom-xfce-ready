@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+export DISPLAY=:0
+export XAUTHORITY="/run/user/$(id -u)/qcom-xfce/Xauthority"
+export MESA_LOADER_DRIVER_OVERRIDE=zink GALLIUM_DRIVER=zink
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/qcom-xfce"
+count=0
+while [ "$count" -lt 90 ]; do
+    if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q 'window id #' &&
+       pgrep -u "$(id -u)" -x xfce4-session >/dev/null &&
+       pgrep -u "$(id -u)" -x xfwm4 >/dev/null &&
+       pgrep -u "$(id -u)" -x xfce4-panel >/dev/null; then
+        if ! grep -q 'glamor X acceleration enabled on.*Adreno' "$runtime/Xorg.0.log"; then
+            echo 'Adreno glamor acceleration is unavailable' >&2
+            exit 1
+        fi
+        if ! timeout 15 glxinfo -B > "$runtime/glxinfo.txt" 2>&1 ||
+           ! grep -q 'direct rendering: Yes' "$runtime/glxinfo.txt" ||
+           ! grep -q 'Accelerated: yes' "$runtime/glxinfo.txt" ||
+           ! grep -q 'OpenGL renderer string:.*Adreno' "$runtime/glxinfo.txt" ||
+           grep -Eiq 'llvmpipe|softpipe|swrast' "$runtime/glxinfo.txt"; then
+            echo 'Adreno window hardware rendering is unavailable' >&2
+            exit 1
+        fi
+        if ! timeout 15 qcom-xfce-graphics-check > "$runtime/graphics-check.txt" 2>&1; then
+            echo 'Hardware pixmap/window presentation check failed' >&2
+            exit 1
+        fi
+        if grep -q 'GL error:' "$runtime/Xorg.0.log"; then
+            echo 'Xorg reported a GL rendering error' >&2
+            exit 1
+        fi
+        exit 0
+    fi
+    count=$((count + 1))
+    sleep 1
+done
+echo 'XFCE did not become ready within 90 seconds' >&2
+exit 1
