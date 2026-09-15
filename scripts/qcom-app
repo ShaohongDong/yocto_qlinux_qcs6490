@@ -98,9 +98,9 @@ def main() -> int:
 
     try:
         if getattr(args, "allow_incomplete_camera", False) and (
-            args.app != "imx708-camera" or args.machine != "radxa-dragon-q6a"
+            args.app != "app002-imx708-camera" or args.machine != "radxa-dragon-q6a"
         ):
-            raise ManifestError("--allow-incomplete-camera requires imx708-camera on radxa-dragon-q6a")
+            raise ManifestError("--allow-incomplete-camera requires app002-imx708-camera on radxa-dragon-q6a")
         if args.action == "list":
             for spec in discover_apps(APPS):
                 print(f"{spec.name}\t{spec.build['system']}\t{','.join(sorted(spec.machines))}\t{spec.summary}")

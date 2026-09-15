@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 schema_version: 1
-name: hevc-benchmark
-summary: Q6A 1080p30 hardware HEVC latency and Y-PSNR benchmark
+name: app004-ai-demo
+summary: Q6A offline NPU object detection with GUI and CLI
 license:
   expression: MIT
   files:
@@ -12,19 +12,18 @@ build:
   system: cmake
   source: .
   options: [-DBUILD_TESTING=OFF]
-check: [/usr/bin/hevc-benchmark, --self-test]
+check: [/usr/bin/ai-demo, --self-test]
 dependencies:
-  build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base]
+  build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base, qairt-sdk]
   runtime:
-  - python3-core
-  - python3-json
-  - python3-statistics
+  - qairt-sdk
+  - qairt-sdk-hexagon-v68
+  - gstreamer1.0-plugins-base-app
+  - gstreamer1.0-plugins-base-playback
+  - gstreamer1.0-plugins-base-videoconvertscale
+  - gstreamer1.0-plugins-good-isomp4
   - gstreamer1.0-plugins-good-video4linux2
   - gstreamer1.0-plugins-bad-videoparsersbad
-  - gstreamer1.0-plugins-base-videotestsrc
-  - gstreamer1.0-plugins-base-videoconvertscale
-  - gstreamer1.0-plugins-base-app
-  - gstreamer1.0
 machines:
   radxa-dragon-q6a:
     kernel_providers: [linux-qcom]

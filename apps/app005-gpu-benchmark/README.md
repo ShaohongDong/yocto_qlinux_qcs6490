@@ -9,12 +9,12 @@ implied by a successful run.
 
 ```sh
 source ./environment-setup-armv8a-qcom-linux
-scripts/qcom-app validate --app gpu-benchmark --machine radxa-dragon-q6a
-PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app build --app gpu-benchmark --machine radxa-dragon-q6a
+scripts/qcom-app validate --app app005-gpu-benchmark --machine radxa-dragon-q6a
+PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app build --app app005-gpu-benchmark --machine radxa-dragon-q6a
 ```
 
 The existing selected-app recipe builds the package. An optional future image
-build uses `scripts/qcom-app image --app gpu-benchmark --machine radxa-dragon-q6a`.
+build uses `scripts/qcom-app image --app app005-gpu-benchmark --machine radxa-dragon-q6a`.
 Only selecting this app adds its Weston launcher. No service starts a GPU load
 automatically at boot.
 
@@ -114,7 +114,7 @@ desktop/background load and kernel log evidence alongside reports.
 ## Tests and evidence
 
 ```sh
-cmake -S apps/gpu-benchmark -B /tmp/gpu-core -DGPU_CORE_ONLY=ON
+cmake -S apps/app005-gpu-benchmark -B /tmp/gpu-core -DGPU_CORE_ONLY=ON
 cmake --build /tmp/gpu-core
 ctest --test-dir /tmp/gpu-core --output-on-failure
 ```

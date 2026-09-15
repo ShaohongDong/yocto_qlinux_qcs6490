@@ -72,15 +72,15 @@ From the repository root (host requires Python lxml, CMake, a C++ compiler,
 device-tree-compiler and fdtget):
 
 ```sh
-python3 apps/imx708-camera/scripts/fetch-chi-reference.py --output /tmp/chi-reference
-python3 apps/imx708-camera/scripts/build-reference-module.py \
+python3 apps/app002-imx708-camera/scripts/fetch-chi-reference.py --output /tmp/chi-reference
+python3 apps/app002-imx708-camera/scripts/build-reference-module.py \
   --cdk-root /tmp/chi-reference --output /tmp/imx708-module-candidate
 cmake -S apps/recipes-camera/imx708-sensor-core/files -B /tmp/imx708-chi \
   -DIMX708_REFERENCE_SOURCE=/path/to/pinned/imx708.c \
   -DIMX708_CHI_CDK=/tmp/chi-reference
 cmake --build /tmp/imx708-chi
 ctest --test-dir /tmp/imx708-chi --output-on-failure
-python3 apps/imx708-camera/scripts/check-candidate-dt.py \
+python3 apps/app002-imx708-camera/scripts/check-candidate-dt.py \
   --kernel-source tmp/work-shared/radxa-dragon-q6a/kernel-source \
   --output /tmp/imx708-dt-candidate \
   --fdtget tmp/sysroots/x86_64/usr/bin/fdtget

@@ -71,7 +71,7 @@ with Kodiak CamX 1.0.25. The public
 targets another BSP and does not establish a compatible Q6A development kit.
 
 The image tasks for the two supported proprietary EFI images now stop when
-`QCOM_APP = "imx708-camera"` until CHI and platform DT integration is supplied.
+`QCOM_APP = "app002-imx708-camera"` until CHI and platform DT integration is supplied.
 The application and register core can still be built independently. No
 configuration switch turns an incomplete integration into a supported image.
 See [CAM3 platform bindings](cam3-bindings.md) for the separate DT gap.

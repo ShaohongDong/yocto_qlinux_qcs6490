@@ -85,9 +85,9 @@ of silently omitting the application:
 ```sh
 source ./environment-setup-armv8a-qcom-linux
 scripts/qcom-app list
-scripts/qcom-app validate --app example --machine radxa-dragon-q6a
-scripts/qcom-app build --app example --machine radxa-dragon-q6a
-scripts/qcom-app all --app example --machine radxa-dragon-q6a
+scripts/qcom-app validate --app app001-example --machine radxa-dragon-q6a
+scripts/qcom-app build --app app001-example --machine radxa-dragon-q6a
+scripts/qcom-app all --app app001-example --machine radxa-dragon-q6a
 ```
 
 See [the application layer guide](apps/README.md) for the complete YAML schema,

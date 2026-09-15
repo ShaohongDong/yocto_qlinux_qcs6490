@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 schema_version: 1
-name: gpu-benchmark
+name: app005-gpu-benchmark
 summary: Q6A GPU rendering throughput and 60-second stability benchmark
 license:
   expression: MIT & CC0-1.0

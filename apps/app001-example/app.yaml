@@ -1,6 +1,6 @@
 # Runnable reference application; paths are relative to this directory.
 schema_version: 1
-name: example
+name: app001-example
 summary: QCOM application framework reference
 license:
   expression: MIT

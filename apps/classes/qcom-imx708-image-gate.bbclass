@@ -6,7 +6,7 @@ QCOM_IMX708_ALLOW_INCOMPLETE ??= "0"
 QCOM_IMX708_INCOMPLETE_REASON = "Reference CHI candidates have unverified target ABI/format compatibility; sensor bundle, Wide tuning and full CamX platform/CAM3 DT are not integrated."
 
 python do_imx708_support_check() {
-    if ((d.getVar("QCOM_APP") or "").strip() != "imx708-camera"
+    if ((d.getVar("QCOM_APP") or "").strip() != "app002-imx708-camera"
             or d.getVar("QCOM_APP_IMAGE_ACTIVE") != "1"):
         return
     backend = d.getVar("QCOM_IMX708_BACKEND")
@@ -14,7 +14,7 @@ python do_imx708_support_check() {
         from qcom_apps.manifest import load_manifest
         from qcom_apps.native_camera import validate_manifest
         try:
-            validate_manifest(load_manifest(d.getVar("QCOM_APPS_DIR"), "imx708-camera"))
+            validate_manifest(load_manifest(d.getVar("QCOM_APPS_DIR"), "app002-imx708-camera"))
         except ValueError as error:
             bb.fatal(str(error))
         return
@@ -27,13 +27,13 @@ python do_imx708_support_check() {
         return
     bb.fatal("IMX708 CAM3 image support is incomplete: " + reason +
              " Build components independently or explicitly select a development image "
-             "with qcom-app image --allow-incomplete-camera. See apps/imx708-camera/docs/bringup.md.")
+             "with qcom-app image --allow-incomplete-camera. See apps/app002-imx708-camera/docs/bringup.md.")
 }
 addtask imx708_support_check before do_rootfs
 
 python imx708_development_marker() {
     import pathlib
-    if ((d.getVar("QCOM_APP") or "").strip() == "imx708-camera"
+    if ((d.getVar("QCOM_APP") or "").strip() == "app002-imx708-camera"
             and d.getVar("QCOM_APP_IMAGE_ACTIVE") == "1"
             and d.getVar("MACHINE") == "radxa-dragon-q6a"
             and d.getVar("QCOM_IMX708_ALLOW_INCOMPLETE") == "1"
@@ -46,10 +46,10 @@ python imx708_development_marker() {
 ROOTFS_POSTPROCESS_COMMAND += "imx708_development_marker; "
 
 # Expand selection after anonymous image configuration has completed.
-DEPENDS:append = "${@' dtc-native' if d.getVar('QCOM_APP') == 'imx708-camera' and d.getVar('QCOM_IMX708_BACKEND') == 'native' else ''}"
+DEPENDS:append = "${@' dtc-native' if d.getVar('QCOM_APP') == 'app002-imx708-camera' and d.getVar('QCOM_IMX708_BACKEND') == 'native' else ''}"
 
 python do_imx708_native_image_check() {
-    if (d.getVar("QCOM_APP") != "imx708-camera" or d.getVar("QCOM_APP_IMAGE_ACTIVE") != "1"
+    if (d.getVar("QCOM_APP") != "app002-imx708-camera" or d.getVar("QCOM_APP_IMAGE_ACTIVE") != "1"
             or d.getVar("QCOM_IMX708_BACKEND") != "native"):
         return
     from pathlib import Path

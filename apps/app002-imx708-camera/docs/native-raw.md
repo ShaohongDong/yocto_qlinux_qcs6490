@@ -33,11 +33,11 @@ Use the **original deployed Q6A DTB with symbols**, not a previous diagnostic
 DTB. The preparation tool refuses to overwrite an output or change the input.
 
 ```sh
-python3 apps/imx708-camera/scripts/prepare-raw-dtb.py \
+python3 apps/app002-imx708-camera/scripts/prepare-raw-dtb.py \
     --base original.dtb --output raw-bus.dtb --stage bus
-python3 apps/imx708-camera/scripts/prepare-raw-dtb.py \
+python3 apps/app002-imx708-camera/scripts/prepare-raw-dtb.py \
     --base original.dtb --output raw-sensor.dtb --stage sensor
-python3 apps/imx708-camera/scripts/prepare-raw-dtb.py \
+python3 apps/app002-imx708-camera/scripts/prepare-raw-dtb.py \
     --base original.dtb --output raw-camss.dtb --stage camss
 ```
 
@@ -96,7 +96,7 @@ Capture completion verifies transport, not optical response or image quality.
 Copy the complete capture directory to an analysis host with numpy and Pillow:
 
 ```sh
-python3 apps/imx708-camera/scripts/preview-native-raw.py raw-scene \
+python3 apps/app002-imx708-camera/scripts/preview-native-raw.py raw-scene \
     --output raw-preview
 ```
 

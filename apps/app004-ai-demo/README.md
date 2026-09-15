@@ -23,8 +23,8 @@ GStreamer GUI/CLI 共用 QNN HTP 推理核心。网络仅在 NPU 上运行；设
 
 ```sh
 source ./environment-setup-armv8a-qcom-linux
-PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app validate --app ai-demo --machine radxa-dragon-q6a
-PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app build --app ai-demo --machine radxa-dragon-q6a
+PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app validate --app app004-ai-demo --machine radxa-dragon-q6a
+PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app build --app app004-ai-demo --machine radxa-dragon-q6a
 ```
 
 不要调用 `image` 或 `all`。应用 manifest 保留框架要求的 image 元数据，但本交付只构建应用。
@@ -33,7 +33,7 @@ PYTHONDONTWRITEBYTECODE=1 scripts/qcom-app build --app ai-demo --machine radxa-d
 使用可用的 Yocto CMake toolchain 也可直接交叉编译：
 
 ```sh
-cmake -S apps/ai-demo -B artifacts/ai-demo/arm64 \
+cmake -S apps/app004-ai-demo -B artifacts/ai-demo/arm64 \
   -DCMAKE_TOOLCHAIN_FILE=/path/to/yocto/toolchain.cmake
 cmake --build artifacts/ai-demo/arm64 -j4
 ```
@@ -54,7 +54,7 @@ onnx 1.17.0。脚本显式选用传统 ONNX 导出器，输入/输出尺寸固�
 完整实际依赖版本写入生成的 `model-manifest.json`。
 
 ```sh
-python3 -B apps/ai-demo/scripts/prepare-model.py \
+python3 -B apps/app004-ai-demo/scripts/prepare-model.py \
   --sdk /path/to/qairt/2.47.0.260601 \
   --output artifacts/ai-demo/model \
   --export-python /path/to/export-venv/bin/python \
@@ -73,7 +73,7 @@ bus.jpg 不参与校准。HTP context 使用 SoC 35、Hexagon v68、2 MB VTCM。
 ## 独立应用包
 
 ```sh
-python3 -B apps/ai-demo/scripts/package.py \
+python3 -B apps/app004-ai-demo/scripts/package.py \
   --build artifacts/ai-demo/arm64 --model artifacts/ai-demo/model \
   --dsp tmp/sysroots-components/all/hexagon-dsp-binaries/usr/share/qcom/qcs6490/radxa/dragon-q6a/dsp/cdsp \
   --output artifacts/ai-demo/q6a-ai-demo-1.0.0 --version 1.0.0

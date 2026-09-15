@@ -20,8 +20,8 @@ from qcom_apps import AppManifest, ManifestError
 class AppManifestTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name) / "example"
-        shutil.copytree(ROOT / "apps/example", self.root)
+        self.root = Path(self.temporary.name) / "app001-example"
+        shutil.copytree(ROOT / "apps/app001-example", self.root)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -38,7 +38,7 @@ class AppManifestTests(unittest.TestCase):
 
     def test_reference_manifest_is_valid(self):
         spec = AppManifest(self.manifest)
-        self.assertEqual(spec.name, "example")
+        self.assertEqual(spec.name, "app001-example")
         self.assertEqual(spec.build["system"], "cmake")
         self.assertEqual(spec.image("radxa-dragon-q6a"), "qcom-minimal-efi-sd-image")
         self.assertIn("kernel/dts/qcom-app-example.dtsi", spec.expanded_inputs())
@@ -69,7 +69,7 @@ class AppManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "duplicate YAML key"):
             AppManifest(self.manifest)
 
-        shutil.copy2(ROOT / "apps/example/app.yaml", self.manifest)
+        shutil.copy2(ROOT / "apps/app001-example/app.yaml", self.manifest)
         data = self.load_data()
         data["unknown"] = True
         self.save_data(data)
@@ -83,7 +83,7 @@ class AppManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "unsafe path characters"):
             AppManifest(self.manifest)
 
-        shutil.copy2(ROOT / "apps/example/app.yaml", self.manifest)
+        shutil.copy2(ROOT / "apps/app001-example/app.yaml", self.manifest)
         (self.root / "src/escape").symlink_to("/etc/passwd")
         with self.assertRaisesRegex(ManifestError, "symbolic links"):
             AppManifest(self.manifest)
@@ -102,7 +102,7 @@ class AppManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "integer 1"):
             AppManifest(self.manifest)
 
-        shutil.copy2(ROOT / "apps/example/app.yaml", self.manifest)
+        shutil.copy2(ROOT / "apps/app001-example/app.yaml", self.manifest)
         data = self.load_data()
         data["check"][0] = "/usr/bin/app'unsafe"
         self.save_data(data)
@@ -142,7 +142,7 @@ class AppManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "WantedBy"):
             AppManifest(self.manifest)
 
-        shutil.copy2(ROOT / "apps/example/systemd/qcom-app-example.service", service)
+        shutil.copy2(ROOT / "apps/app001-example/systemd/qcom-app-example.service", service)
         (self.root / "kernel/modules/example/Makefile").unlink()
         with self.assertRaisesRegex(ManifestError, "lacks Makefile or Kbuild"):
             AppManifest(self.manifest)

@@ -24,7 +24,7 @@ class DevelopmentImageTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.values = {
-            "QCOM_APP": "imx708-camera", "MACHINE": "radxa-dragon-q6a",
+            "QCOM_APP": "app002-imx708-camera", "MACHINE": "radxa-dragon-q6a",
             "QCOM_IMX708_BACKEND": "camx",
             "QCOM_APP_IMAGE_ACTIVE": "1", "QCOM_IMX708_ALLOW_INCOMPLETE": "0",
             "QCOM_IMX708_INCOMPLETE_REASON": "Sensor integration pending.",
@@ -60,7 +60,7 @@ class DevelopmentImageTests(unittest.TestCase):
     def test_native_contract_rejects_missing_services(self):
         from qcom_apps.manifest import load_manifest
         from qcom_apps.native_camera import validate_manifest
-        spec = load_manifest(ROOT/"apps", "imx708-camera")
+        spec = load_manifest(ROOT/"apps", "app002-imx708-camera")
         with self.assertRaises(ValueError):
             validate_manifest(SimpleNamespace(kernel=spec.kernel, services=[], dependencies=spec.dependencies))
 
@@ -92,9 +92,9 @@ class DevelopmentImageTests(unittest.TestCase):
 
     def test_cli_rejects_wrong_app_machine_and_component_command(self):
         for action, app, machine in (
-            ("image", "example", "radxa-dragon-q6a"),
-            ("all", "imx708-camera", "radxa-dragon-q8b"),
-            ("build", "imx708-camera", "radxa-dragon-q6a"),
+            ("image", "app001-example", "radxa-dragon-q6a"),
+            ("all", "app002-imx708-camera", "radxa-dragon-q8b"),
+            ("build", "app002-imx708-camera", "radxa-dragon-q6a"),
         ):
             with self.subTest(action=action, app=app, machine=machine):
                 with patch("sys.argv", ["qcom-app", action, "--app", app, "--machine", machine,
@@ -105,13 +105,13 @@ class DevelopmentImageTests(unittest.TestCase):
 
     def test_cli_passes_opt_in_only_through_temporary_config(self):
         for enabled in (False, True):
-            args = SimpleNamespace(app="imx708-camera", machine="radxa-dragon-q6a",
+            args = SimpleNamespace(app="app002-imx708-camera", machine="radxa-dragon-q6a",
                                    allow_incomplete_camera=enabled, dry_run=False)
 
             def run(command, **kwargs):
                 content = Path(command[2]).read_text()
                 self.assertEqual('QCOM_IMX708_ALLOW_INCOMPLETE = "1"' in content, enabled)
-                self.assertIn('QCOM_APP = "imx708-camera"', content)
+                self.assertIn('QCOM_APP = "app002-imx708-camera"', content)
                 return SimpleNamespace(returncode=0)
 
             with patch.dict("os.environ", {"OECORE_NATIVE_SYSROOT": "/sdk"}), patch.object(cli.subprocess, "run", side_effect=run):

@@ -15,8 +15,8 @@ From the SDK root in a fresh shell:
 
 ```sh
 source ./environment-setup-armv8a-qcom-linux
-scripts/qcom-app validate --app imx708-camera --machine radxa-dragon-q6a
-scripts/qcom-app image --app imx708-camera --machine radxa-dragon-q6a
+scripts/qcom-app validate --app app002-imx708-camera --machine radxa-dragon-q6a
+scripts/qcom-app image --app app002-imx708-camera --machine radxa-dragon-q6a
 ```
 
 The default image is `qcom-multimedia-proprietary-efi-sd-image`. The native image
@@ -54,12 +54,12 @@ Host dependencies: GTK3, GStreamer core/app development packages; runtime
 ffprobe. Build without Qualcomm libraries only for host tests:
 
 ```sh
-cmake -S apps/imx708-camera -B /tmp/imx708-host -DIMX708_WITH_QMMF=OFF
+cmake -S apps/app002-imx708-camera -B /tmp/imx708-host -DIMX708_WITH_QMMF=OFF
 cmake --build /tmp/imx708-host -j4
 ctest --test-dir /tmp/imx708-host --output-on-failure
 xvfb-run -a /tmp/imx708-host/imx708-camera --exercise-dir /tmp/imx708-media
-python3 apps/imx708-camera/scripts/check-media.py /tmp/imx708-media
-python3 apps/imx708-camera/scripts/audit-sdk.py --sdk .
+python3 apps/app002-imx708-camera/scripts/check-media.py /tmp/imx708-media
+python3 apps/app002-imx708-camera/scripts/audit-sdk.py --sdk .
 ```
 
 `--self-test` needs neither a display nor a camera and is suitable for the

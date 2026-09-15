@@ -16,11 +16,11 @@ Activate the eSDK in a fresh shell, then use the wrapper:
 ```sh
 source ./environment-setup-armv8a-qcom-linux
 scripts/qcom-app list
-scripts/qcom-app validate --app example --machine radxa-dragon-q6a
-scripts/qcom-app build --app example --machine radxa-dragon-q6a
-scripts/qcom-app kernel --app example --machine radxa-dragon-q6a
-scripts/qcom-app image --app example --machine radxa-dragon-q6a
-scripts/qcom-app all --app example --machine radxa-dragon-q6a
+scripts/qcom-app validate --app app001-example --machine radxa-dragon-q6a
+scripts/qcom-app build --app app001-example --machine radxa-dragon-q6a
+scripts/qcom-app kernel --app app001-example --machine radxa-dragon-q6a
+scripts/qcom-app image --app app001-example --machine radxa-dragon-q6a
+scripts/qcom-app all --app app001-example --machine radxa-dragon-q6a
 ```
 
 `image` and `all` use the machine's default image from the manifest. Pass
@@ -40,7 +40,7 @@ The schema is strict and currently fixed at version 1:
 
 ```yaml
 schema_version: 1
-name: my-app
+name: app006-my-app
 summary: Short package description
 license:
   expression: MIT
@@ -96,7 +96,23 @@ for QEMU user-mode execution and must not require physical peripherals.
 
 ## Adding an application
 
-Copy `apps/example/` to a lowercase kebab-case directory, change `name`, and
+Application directories and manifest `name` use `appNNN-<lowercase-kebab-name>`.
+Use the same full name for `--app` and `QCOM_APP`; old names are not aliases.
+
+| Application | Directory / selection name |
+| --- | --- |
+| Reference example | `app001-example` |
+| IMX708 camera | `app002-imx708-camera` |
+| HEVC benchmark | `app003-hevc-benchmark` |
+| AI demo | `app004-ai-demo` |
+| GPU benchmark | `app005-gpu-benchmark` |
+
+Numbers are permanent: allocate the next number (`app006` next), never renumber
+existing apps or reuse retired numbers. Shared layer directories are not apps.
+Installed executable, service, desktop entry, icon and kernel module names do
+not need the directory prefix.
+
+Copy `apps/app001-example/` to the next numbered directory, change `name`, and
 replace its sources and metadata. Keep application-specific kernel and DT
 changes inside that directory. Do not add persistent application work to the
 devtool-managed `workspace/` layer.
@@ -109,13 +125,13 @@ claims.
 
 `hevc-benchmark` provides a Q6A desktop/CLI app for 1080p30 hardware HEVC
 encode/decode latency, throughput and matched-frame Y-PSNR. Select it with
-`scripts/qcom-app image --app hevc-benchmark --machine radxa-dragon-q6a`
-to build the multimedia SD image. See [its README](hevc-benchmark/README.md)
+`scripts/qcom-app image --app app003-hevc-benchmark --machine radxa-dragon-q6a`
+to build the multimedia SD image. See [its README](app003-hevc-benchmark/README.md)
 for measurement definitions, headless acceptance and evidence boundaries.
 
 ## GPU performance validation
 
 `gpu-benchmark` provides desktop and headless rendering baselines, fixed 1080p
 workloads and a default 60-second stability test. Build with
-`scripts/qcom-app build --app gpu-benchmark --machine radxa-dragon-q6a`.
-See [its README](gpu-benchmark/README.md) for metrics and board acceptance.
+`scripts/qcom-app build --app app005-gpu-benchmark --machine radxa-dragon-q6a`.
+See [its README](app005-gpu-benchmark/README.md) for metrics and board acceptance.

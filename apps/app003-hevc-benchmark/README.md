@@ -10,9 +10,9 @@ From the SDK root in a fresh shell:
 
 ```sh
 source ./environment-setup-armv8a-qcom-linux
-scripts/qcom-app validate --app hevc-benchmark --machine radxa-dragon-q6a
-scripts/qcom-app build --app hevc-benchmark --machine radxa-dragon-q6a
-scripts/qcom-app image --app hevc-benchmark --machine radxa-dragon-q6a
+scripts/qcom-app validate --app app003-hevc-benchmark --machine radxa-dragon-q6a
+scripts/qcom-app build --app app003-hevc-benchmark --machine radxa-dragon-q6a
+scripts/qcom-app image --app app003-hevc-benchmark --machine radxa-dragon-q6a
 ```
 
 The selected image is `qcom-multimedia-proprietary-efi-sd-image`. Its `.wic` and
@@ -97,7 +97,7 @@ establish hardware speed, HDMI behavior or boot acceptance.
 ## Offline tests
 
 ```sh
-cmake -S apps/hevc-benchmark -B artifacts/hevc-benchmark/core -DHEVC_CORE_ONLY=ON
+cmake -S apps/app003-hevc-benchmark -B artifacts/hevc-benchmark/core -DHEVC_CORE_ONLY=ON
 cmake --build artifacts/hevc-benchmark/core
 ctest --test-dir artifacts/hevc-benchmark/core --output-on-failure
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests

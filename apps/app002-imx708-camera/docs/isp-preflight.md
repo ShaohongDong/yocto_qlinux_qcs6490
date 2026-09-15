@@ -60,13 +60,13 @@ module. Build with the SDK cross compiler and existing kernel build artifacts,
 then compare `modinfo -F vermagic` with the installed module.
 
 ```sh
-python3 apps/imx708-camera/scripts/check-cci-completions.py \
+python3 apps/app002-imx708-camera/scripts/check-cci-completions.py \
   tmp/work-shared/radxa-dragon-q6a/kernel-source/drivers/i2c/busses/i2c-qcom-cci.c
 # Expected failure for the unpatched master-1-only case.
-python3 apps/imx708-camera/scripts/check-cci-completions.py \
+python3 apps/app002-imx708-camera/scripts/check-cci-completions.py \
   /path/to/patched/i2c-qcom-cci.c
-python3 -m unittest discover -s apps/imx708-camera/tests -p test_cci_dtb.py
-python3 apps/imx708-camera/scripts/prepare-cci-dtb.py \
+python3 -m unittest discover -s apps/app002-imx708-camera/tests -p test_cci_dtb.py
+python3 apps/app002-imx708-camera/scripts/prepare-cci-dtb.py \
   --base /path/to/backed-up-production.dtb --output /path/to/new/cci.dtb
 ```
 
