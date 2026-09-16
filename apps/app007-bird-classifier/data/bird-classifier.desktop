@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Q6A Bird Classifier
+Exec=q6a-bird-classifier --gui
+Icon=bird-classifier
+Terminal=false
+Categories=Graphics;Education;

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: app007-bird-classifier
+summary: Q6A NPU classification of 20 CUB bird species
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+inputs: [LICENSE, README.md, CMakeLists.txt, src, tests, data, scripts]
+build:
+  system: cmake
+  source: .
+  options: [-DBUILD_TESTING=OFF]
+check: [/usr/bin/bird-classifier, --self-test]
+dependencies:
+  build: [gtk+3, qairt-sdk, pkgconfig-native]
+  runtime:
+  - qairt-sdk
+  - qairt-sdk-hexagon-v68
+machines:
+  radxa-dragon-q6a:
+    kernel_providers: [linux-qcom]
+    images:
+      default: qcom-multimedia-proprietary-efi-sd-image
+      allowed: [qcom-multimedia-proprietary-efi-sd-image]
+kernel:
+  config: []
+  patches: []
+  device_tree:
+    files: []
+    patches: []
+  modules: []
+services: []
