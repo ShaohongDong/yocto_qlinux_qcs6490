@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Remove the active application link; retain versioned payloads and reports.
+set -eu
+target=/var/lib/q6a-human-tracker
+if test -f "$target/previous"; then
+    previous=$(cat "$target/previous")
+    case "$previous" in releases/*) ;; *) echo "Invalid previous release" >&2; exit 1;; esac
+    test -d "$target/$previous"
+    ln -s "$previous" "$target/current.new"
+    mv -Tf "$target/current.new" "$target/current"
+    rm "$target/previous"
+    echo "Restored previous application: $previous"
+else
+    rm -f "$target/current"
+    if test "$(readlink /usr/local/bin/q6a-human-tracker 2>/dev/null || true)" = "$target/current/run"; then
+        rm /usr/local/bin/q6a-human-tracker
+    fi
+    rm -f /home/weston/.local/share/applications/human-tracker.desktop
+    if test -f "$target/added-weston-fastrpc-group"; then
+        gpasswd -d weston fastrpc
+        rm "$target/added-weston-fastrpc-group"
+    fi
+    echo "Application deactivated; versioned files retained in $target/releases"
+fi

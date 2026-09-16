@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Q6A Human Tracker
+Comment=Human skeletons, person IDs and motion trails
+Exec=human-tracker --gui
+Icon=human-tracker
+Terminal=false
+Categories=Graphics;Education;
