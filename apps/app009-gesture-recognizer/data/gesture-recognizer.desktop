@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Q6A Gesture Recognizer
+Comment=Human skeletons, person IDs and motion trails
+Exec=gesture-recognizer --gui
+Icon=gesture-recognizer
+Terminal=false
+Categories=Graphics;Education;
