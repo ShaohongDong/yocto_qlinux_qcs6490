@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Install torch==2.7.1 and torchvision==0.22.1 from the cu118 index first.
+ultralytics==8.3.0
+numpy==1.26.4
+onnx==1.17.0
+onnxruntime==1.20.1
+opencv-python==4.10.0.84
+pycocotools==2.0.10
+motmetrics==1.4.0

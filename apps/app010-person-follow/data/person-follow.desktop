@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Q6A Person Follow
+Name[zh_CN]=人物运动跟踪
+Comment=Select one person while tracking everyone
+Comment[zh_CN]=多人轨迹与单人锁定
+Exec=person-follow --gui
+Icon=person-follow
+Terminal=false
+Categories=Graphics;Education;

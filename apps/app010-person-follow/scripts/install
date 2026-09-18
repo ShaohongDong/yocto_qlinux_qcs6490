@@ -1,0 +1,41 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+test "$(id -u)" = 0 || { echo "Run installer as root" >&2; exit 1; }
+payload=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+target=/var/lib/q6a-person-follow
+version=$(cat "$payload/VERSION")
+case "$version" in ''|*[!a-zA-Z0-9._-]*) echo "Invalid version" >&2; exit 1;; esac
+test "$(uname -m)" = aarch64 || { echo "Q6A ARM64 target required" >&2; exit 1; }
+(cd "$payload" && sha256sum -c SHA256SUMS)
+test ! -e "$target/releases/$version" || { echo "Release already exists: $version" >&2; exit 1; }
+mkdir -p "$target/releases"
+cp -R "$payload" "$target/releases/$version"
+"$target/releases/$version/run" --self-test
+if test -L "$target/current"; then
+    readlink "$target/current" > "$target/previous"
+fi
+ln -s "releases/$version" "$target/current.new"
+mv -Tf "$target/current.new" "$target/current"
+mkdir -p /usr/local/bin
+ln -sfn "$target/current/run" /usr/local/bin/q6a-person-follow
+if id weston >/dev/null 2>&1; then
+    # sg refreshes the group for desktop launches without restarting Weston.
+    if ! id -nG weston | tr ' ' '\n' | grep -qx fastrpc; then
+        usermod -a -G fastrpc weston
+        touch "$target/added-weston-fastrpc-group"
+    fi
+    mkdir -p /home/weston/.local/share/applications
+    cat > /home/weston/.local/share/applications/person-follow.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Q6A Person Follow
+Name[zh_CN]=人物运动跟踪
+Exec=sg fastrpc -c "/var/lib/q6a-person-follow/current/run --gui"
+Icon=/var/lib/q6a-person-follow/current/share/icons/hicolor/scalable/apps/person-follow.svg
+Terminal=false
+Categories=Graphics;Education;
+DESKTOP
+    chown weston:weston /home/weston/.local/share/applications/person-follow.desktop
+fi
+echo "Installed: $target/current/run --gui"

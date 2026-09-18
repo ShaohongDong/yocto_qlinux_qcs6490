@@ -106,8 +106,13 @@ Use the same full name for `--app` and `QCOM_APP`; old names are not aliases.
 | HEVC benchmark | `app003-hevc-benchmark` |
 | AI demo | `app004-ai-demo` |
 | GPU benchmark | `app005-gpu-benchmark` |
+| Wi-Fi test | `app006-wifi-test` |
+| Bird classifier | `app007-bird-classifier` |
+| Human tracker | `app008-human-tracker` |
+| Gesture recognizer | `app009-gesture-recognizer` |
+| Person follow | `app010-person-follow` |
 
-Numbers are permanent: allocate the next number (`app006` next), never renumber
+Numbers are permanent: allocate the next number (`app011` next), never renumber
 existing apps or reuse retired numbers. Shared layer directories are not apps.
 Installed executable, service, desktop entry, icon and kernel module names do
 not need the directory prefix.
