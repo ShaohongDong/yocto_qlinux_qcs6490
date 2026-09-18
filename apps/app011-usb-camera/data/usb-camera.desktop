@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=USB Camera Preview
+Name[zh_CN]=USB 摄像头预览
+Comment=Preview a USB camera
+Exec=usb-camera --gui
+Icon=usb-camera
+Terminal=false
+Categories=AudioVideo;Video;

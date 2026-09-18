@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+test "$(id -u)" = 0
+target=/var/lib/q6a-usb-camera
+if test -f "$target/previous"; then
+    previous=$(cat "$target/previous")
+    case "$previous" in releases/*) ;; *) exit 1;; esac
+    test -d "$target/$previous"
+    ln -s "$previous" "$target/current.new"
+    mv -Tf "$target/current.new" "$target/current"
+    rm "$target/previous"
+else
+    if test "$(readlink /usr/local/bin/q6a-usb-camera 2>/dev/null || true)" = "$target/current/bin/usb-camera"; then
+        rm /usr/local/bin/q6a-usb-camera
+    fi
+    rm -f "$target/current" /home/weston/.local/share/applications/usb-camera.desktop
+fi
+echo 'Deactivated current release; version files retained'

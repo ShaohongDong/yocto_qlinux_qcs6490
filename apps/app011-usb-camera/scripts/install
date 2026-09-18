@@ -1,0 +1,22 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+test "$(id -u)" = 0
+test "$(uname -m)" = aarch64
+payload=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+target=/var/lib/q6a-usb-camera
+version=$(cat "$payload/VERSION")
+case "$version" in ''|*[!a-zA-Z0-9._-]*|.|..) exit 1;; esac
+(cd "$payload" && sha256sum -c SHA256SUMS)
+test ! -e "$target/releases/$version"
+mkdir -p "$target/releases"
+cp -R "$payload" "$target/releases/$version"
+"$target/releases/$version/bin/usb-camera" --self-test
+if test -L "$target/current"; then readlink "$target/current" > "$target/previous"; fi
+ln -s "releases/$version" "$target/current.new"
+mv -Tf "$target/current.new" "$target/current"
+mkdir -p /usr/local/bin /home/weston/.local/share/applications
+ln -sfn "$target/current/bin/usb-camera" /usr/local/bin/q6a-usb-camera
+sed -e 's|Exec=usb-camera|Exec=/usr/local/bin/q6a-usb-camera|' -e "s|Icon=usb-camera|Icon=$target/current/usb-camera.svg|" "$payload/usb-camera.desktop" > /home/weston/.local/share/applications/usb-camera.desktop
+chown weston:weston /home/weston/.local/share/applications/usb-camera.desktop
+echo 'Installed q6a-usb-camera'
