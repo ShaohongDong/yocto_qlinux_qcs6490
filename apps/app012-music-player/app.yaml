@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: app012-music-player
+summary: Q6A desktop music player with local files and audio output selection
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: 849abeca484cc467659d7993d61f92d5
+inputs:
+- LICENSE
+- README.md
+- CMakeLists.txt
+- src
+- data
+- tests
+build:
+  system: cmake
+  source: .
+  options:
+  - -DBUILD_TESTING=OFF
+check:
+- /usr/bin/music-player
+- --self-test
+dependencies:
+  build:
+  - pkgconfig-native
+  - gtk+3
+  - pulseaudio
+  - gstreamer1.0
+  - gstreamer1.0-plugins-base
+  runtime:
+  - libpulse
+  - gstreamer1.0-plugins-base-playback
+  - gstreamer1.0-plugins-base-typefindfunctions
+  - gstreamer1.0-plugins-base-audioconvert
+  - gstreamer1.0-plugins-base-volume
+  - gstreamer1.0-plugins-base-audioresample
+  - gstreamer1.0-plugins-base-alsa
+  - gstreamer1.0-plugins-base-ogg
+  - gstreamer1.0-plugins-base-vorbis
+  - gstreamer1.0-plugins-good-autodetect
+  - gstreamer1.0-plugins-good-pulseaudio
+  - gstreamer1.0-plugins-good-mpg123
+  - gstreamer1.0-plugins-good-wavparse
+  - gstreamer1.0-plugins-good-flac
+  - gstreamer1.0-plugins-good-audioparsers
+  - ttf-wqy-zenhei
+machines:
+  radxa-dragon-q6a:
+    kernel_providers:
+    - linux-qcom
+    images:
+      default: qcom-multimedia-proprietary-efi-sd-image
+      allowed:
+      - qcom-multimedia-proprietary-efi-sd-image
+kernel:
+  config: []
+  patches: []
+  device_tree:
+    files: []
+    patches: []
+  modules: []
+services: []

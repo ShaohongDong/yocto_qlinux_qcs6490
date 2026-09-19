@@ -112,8 +112,9 @@ Use the same full name for `--app` and `QCOM_APP`; old names are not aliases.
 | Gesture recognizer | `app009-gesture-recognizer` |
 | Person follow | `app010-person-follow` |
 | USB camera preview | `app011-usb-camera` |
+| Music player | `app012-music-player` |
 
-Numbers are permanent: allocate the next number (`app012` next), never renumber
+Numbers are permanent: allocate the next number (`app013` next), never renumber
 existing apps or reuse retired numbers. Shared layer directories are not apps.
 Installed executable, service, desktop entry, icon and kernel module names do
 not need the directory prefix.
