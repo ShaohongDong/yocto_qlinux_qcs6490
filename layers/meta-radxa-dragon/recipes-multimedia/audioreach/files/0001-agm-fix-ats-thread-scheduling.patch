@@ -1,0 +1,26 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] agm: allow ATS initialization in unprivileged sessions
+
+Unprivileged desktop sessions cannot create an explicitly scheduled FIFO
+thread. Retry the optional ATS control thread with normal scheduling on EPERM.
+Other thread failures remain errors. This does not bypass DSP initialization.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/service/src/agm.c
++++ b/service/src/agm.c
+@@ -161,6 +161,13 @@
+     if (enable_ats_thread) {
+         ret = pthread_create(&ats_thread, (const pthread_attr_t *) &tattr,
+                                            ats_init_thread, NULL);
++        /* ATS is a control thread. Desktop sessions may lack permission for
++         * SCHED_FIFO; keep control initialization available at normal priority.
++         */
++        if (ret == EPERM) {
++            AGM_LOGI("ATS realtime scheduling unavailable, using default policy");
++            ret = pthread_create(&ats_thread, NULL, ats_init_thread, NULL);
++        }
+         if (ret) {
+             AGM_LOGE("ats init thread creation failed");
+             ats_thread_started = false;

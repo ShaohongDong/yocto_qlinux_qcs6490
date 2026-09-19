@@ -1,0 +1,79 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] pipewire: support headphone-only jack policy and report start failures
+
+Keep the Q6A headphone route fixed, expose jack availability, and suspend
+on removal. Query the headphone switch at boot instead of only line-out.
+Report PAL start failures to clients rather than silently accepting audio.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/src/pw-pal-plugin.c
++++ b/src/pw-pal-plugin.c
+@@ -174,7 +174,7 @@
+     rc = pal_stream_set_buffer_size(udata->stream_handle, &in_buf_cfg, &out_buf_cfg);
+     if(rc) {
+         pw_log_error("pal_stream_set_buffer_size failed\n");
+-        goto exit;
++        goto cleanup;
+     }
+     rc = pal_stream_start(udata->stream_handle);
+     if (rc) {
+@@ -191,6 +191,8 @@
+     if (close_pal_stream(udata))
+         pw_log_error("could not close sink handle %p", udata->stream_handle);
+ exit:
++    pw_stream_set_error(udata->stream, rc < 0 ? rc : -EIO,
++                        "PAL stream startup failed: %d", rc);
+     return;
+ 
+ }
+@@ -654,6 +656,18 @@
+         return ret;
+     }
+     else if (strstr(udata->jack_name, "Headset")) {
++        const char *headphone_only = pw_properties_get(udata->props, "headphone-only");
++        if (headphone_only && strcmp(headphone_only, "true") == 0) {
++            const struct spa_dict_item items[] = {
++                { "q6a.jack.connected", state ? "true" : "false" },
++            };
++            const struct spa_dict props = SPA_DICT_INIT_ARRAY(items);
++            pw_stream_update_properties(udata->stream, &props);
++            /* Q6A has no fallback speaker. Suspend on removal; never route
++             * the stream to another output behind the application's back.
++             */
++            return pw_stream_set_active(udata->stream, state);
++        }
+ 
+         if (!pw_stream_is_running(udata) || !udata->stream_handle) {
+             pw_log_error("%s: stream not streaming; skip headset routing", __func__);
+@@ -687,12 +701,15 @@
+     // Query current switch state
+     if (ioctl(fd, EVIOCGSW(sizeof(sw_bitmask)), sw_bitmask) >= 0) {
+         // Check for HDMI/DP jack state
+-        if (BIT_VALUE(SW_LINEOUT_INSERT, sw_bitmask))
++        if (BIT_VALUE(SW_LINEOUT_INSERT, sw_bitmask) ||
++            (strstr(udata->jack_name, "Headset") &&
++             BIT_VALUE(SW_HEADPHONE_INSERT, sw_bitmask)))
+             connected = 1;
+ 
+-        if (connected) {
+-            pw_log_info("%s: Connected (boot time)", udata->jack_name);
+-            if(handle_device_connection(udata, true))
++        if (connected || strstr(udata->jack_name, "Headset")) {
++            pw_log_info("%s: %s (boot time)", udata->jack_name,
++                        connected ? "Connected" : "Disconnected");
++            if(handle_device_connection(udata, connected))
+                 pw_log_error("Failed to handle device connection");
+         }
+     } else {
+@@ -713,7 +730,8 @@
+         return;
+ 
+     if (mask & (SPA_IO_ERR | SPA_IO_HUP)) {
+-        pw_log_error("error or hang-up on the hdmi/dp fd");
++        pw_log_error("error or hang-up on the jack fd");
++        handle_device_connection(udata, false);
+         pw_loop_destroy_source(pw_context_get_main_loop(udata->context), udata->jack_src);
+         udata->jack_src = NULL;
+ 

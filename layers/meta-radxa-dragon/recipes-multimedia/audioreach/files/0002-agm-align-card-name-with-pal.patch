@@ -1,0 +1,28 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] agm: use the codec short name for configuration lookup
+
+Q6A exposes different short and long card names. Use the same name as PAL
+instead of deriving calibration paths from the board vendor string. Card
+selection still follows the discovered non-USB codec card, not its index.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/service/src/device.c
++++ b/service/src/device.c
+@@ -1425,7 +1425,14 @@
+         line2[len - 1] = '\0';
+ 
+         if (check_and_update_snd_card(line1)) {
+-            card_name = strtok_r(line2, "[:] ", &tmp);
++            /* Use the same short card name as PAL/tinyalsa. The long name
++             * may describe the board vendor/revision instead of the codec.
++             */
++            card_name = strstr(line1, " - ");
++            if (card_name)
++                card_name += 3;
++            else
++                card_name = strtok_r(line2, "[:] ", &tmp);
+             if (card_name != NULL) {
+                 strlcpy(snd_card_name, card_name, FILE_PATH_EXTN_MAX_SIZE);
+                 is_updated = true;

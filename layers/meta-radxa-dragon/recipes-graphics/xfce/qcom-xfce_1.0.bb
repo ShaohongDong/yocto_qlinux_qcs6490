@@ -14,7 +14,7 @@ REQUIRED_DISTRO_FEATURES = "x11 pam systemd opengl"
 DEPENDS = "virtual/libgl libx11"
 RDEPENDS:${PN} = "packagegroup-xfce-base xserver-nodm-init xserver-xorg \
                  xf86-input-libinput xf86-video-modesetting weston-init dbus xauth xprop xrandr \
-                 util-linux-mcookie procps mesa-demos-info mesa-megadriver coreutils"
+                 util-linux-mcookie procps mesa-demos-info mesa-megadriver coreutils q6a-audio-access"
 SYSTEMD_SERVICE:${PN} = "qcom-xfce-ready.service"
 
 do_compile() {

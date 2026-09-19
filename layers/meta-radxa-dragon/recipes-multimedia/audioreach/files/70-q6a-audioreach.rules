@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# Apply seat access before 73-seat-late.rules; do not make DSP devices world writable.
+KERNEL=="msm_audio_mem", TAG+="uaccess"
+KERNEL=="aud_pasthru_adsp", TAG+="uaccess"
