@@ -104,6 +104,63 @@ qcom-multimedia-proprietary-efi-sd-image-radxa-dragon-q6a.rootfs.wic
 qcom-multimedia-proprietary-efi-ufs-4k-image-radxa-dragon-q6a.rootfs.wic
 ```
 
+## Common Maintenance Tools
+
+The Q6A `qcom-multimedia-proprietary-efi-sd-image` installs
+`packagegroup-radxa-dragon-common-tools` for maintenance and board diagnostics.
+Other images do not automatically include this package group.
+
+| Purpose | Tools and examples |
+| --- | --- |
+| Network interfaces and routes | `ifconfig -a`, `ip addr`, `ip route`, `ss -lnt`, `netstat -rn` |
+| Connectivity and DNS | `ping`, `arping`, `tracepath`, `traceroute`, `dig`, `host`, `nslookup` |
+| Network diagnostics | `ethtool`, `iw`, `iperf3`, `tcpdump` |
+| Transfers | `curl`, `wget`, `rsync`; CA certificates included |
+| Process diagnostics | `htop`, `lsof`, `strace`, `ps`, `file`, `less` |
+| Editing and shell sessions | `nano`, `tmux`, `jq`, GNU `find` and `diff` |
+| Archives | `tar`, `gzip`, `bzip2`, `xz`, `zip`, `unzip` |
+| Board diagnostics | `lsusb`, `lspci`, `i2cdetect -l`, `picocom` |
+
+DNS utilities are client tools; this package group does not request the BIND
+server or a compiler toolchain. Command links shared with BusyBox are managed
+by the recipes' alternatives mechanism.
+
+Build from the eSDK root:
+
+```bash
+source ./environment-setup-armv8a-qcom-linux
+PYTHONDONTWRITEBYTECODE=1 devtool build-image qcom-multimedia-proprietary-efi-sd-image
+```
+
+Validate the completed manifest and command files in the generated rootfs.
+Offline inspection confirms tool inclusion, not physical network, serial, or
+I2C operation; those require separate board validation.
+
+For an OTA release, select a version newer than the running deployment and
+preserve its application selection using a release-specific BitBake config:
+
+```bitbake
+QCOM_OTA_VERSION = "2.0.8"
+QCOM_APP = "app003-hevc-benchmark"
+QCOM_APP_IMAGE = "qcom-multimedia-proprietary-efi-sd-image"
+```
+
+Pass that config with `bitbake -R /path/to/release.conf` after activating the
+eSDK, then follow [the signed OTA workflow](README-OTA.md). Verify the packaged
+initramfs against the standalone deploy artifact before publishing; a cached
+boot payload must not silently replace the current one.
+
+The 2026-09-19 Q6A OTA 2.0.8 validation passed image structural checks, 96
+executable/library file hash checks, and 35 board smoke checks. The image added
+27 packages without removing existing packages; WIC size increased by 52 MiB.
+Board checks covered command availability, Ethernet connectivity, DNS, HTTP,
+packet capture, file/archive operations, tmux, iperf3 loopback, USB/PCI/I2C
+enumeration and XFCE readiness. OTA boot confirmation passed with 2.0.7 retained
+as rollback. Serial data transfer, I2C transactions and physical power-loss
+rollback were not tested. Three PipeWire failed units were present before the
+update; no failed systemd units remained after reboot. Audio functionality was
+not tested.
+
 ## Write BIOS
 
 The board must have a compatible BIOS/UEFI release in SPI NOR. Obtain it from

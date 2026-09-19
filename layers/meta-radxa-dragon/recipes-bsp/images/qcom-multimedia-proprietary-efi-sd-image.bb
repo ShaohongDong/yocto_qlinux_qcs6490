@@ -3,3 +3,5 @@ DESCRIPTION = "GPT image with an EFI System Partition and proprietary QCOM multi
 
 require recipes-products/images/qcom-multimedia-proprietary-image.bb
 require qcom-efi-sd-image.inc
+
+IMAGE_INSTALL:append:radxa-dragon-q6a = " packagegroup-radxa-dragon-common-tools"
