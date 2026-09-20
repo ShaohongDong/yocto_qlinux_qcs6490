@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Host-only AU indexing and exact-source offline PSNR/SSIM validation."""
+import argparse
+import hashlib
+import json
+import math
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def probe(path):
+    return json.loads(subprocess.check_output([
+        'ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
+        '-show_streams', '-show_entries',
+        'frame=pkt_pos,pkt_size,pict_type,key_frame,width,height,pix_fmt:stream=codec_name,profile,width,height,pix_fmt,level,refs',
+        '-of', 'json', str(path)], text=True))
+
+
+def index_stream(path):
+    info = probe(path)
+    frames = info['frames']
+    if not frames or not frames[0].get('key_frame'):
+        raise ValueError('A corpus must begin with a random-access picture')
+    packets = sorted((int(f['pkt_pos']), int(f['pkt_size']), n) for n, f in enumerate(frames))
+    offset = 0
+    for pos, size, _ in packets:
+        if pos != offset or size <= 0:
+            raise ValueError('AU boundaries are incomplete or overlap')
+        offset += size
+    if offset != path.stat().st_size:
+        raise ValueError('AU index does not cover the complete bitstream')
+    Path(str(path) + '.index').write_text(''.join(f'{p} {s} {n}\n' for p, s, n in packets))
+    info['sha256'] = sha(path)
+    Path(str(path) + '.probe.json').write_text(json.dumps(info, indent=2) + '\n')
+    return info
+
+
+def log_rows(path):
+    rows = []
+    for line in path.read_text().splitlines():
+        row = {}
+        for field in line.split():
+            if ':' not in field:
+                continue
+            key, value = field.split(':', 1)
+            if value:
+                row[key] = float(value)
+        rows.append(row)
+    return rows
+
+
+def evaluate(report_path, raw, output):
+    report = json.loads(report_path.read_text())
+    stream = report_path.parent / 'output.h265'
+    if report['status'] == 'CANCELLED' or not report['eos']:
+        raise ValueError('Quality requires an uncancelled, completely drained saved stream')
+    if sha(raw) != report['input_sha256']:
+        raise ValueError('Raw source hash does not match this exact encoding run')
+    info = probe(stream)
+    count = report['input_frames']
+    w, h = report['width'], report['height']
+    if len(info['frames']) != count or report['encoded_frames'] != count or (report['frame_limit'] and count != report['frame_limit']):
+        raise ValueError('Encoded/decoded/source frame count mismatch')
+    if report['mode'] == 'loopback' and report['decoded_frames'] != count:
+        raise ValueError('Hardware decoder did not drain every source frame')
+    if raw.stat().st_size != count * w * h * 3 // 2:
+        raise ValueError('Quality corpus must be consumed exactly once')
+    if any(f['width'] != w or f['height'] != h or f['pix_fmt'] != 'yuv420p' for f in info['frames']):
+        raise ValueError('Unexpected decoded dimensions or bit depth')
+    index = [list(map(int, line.split())) for line in Path(str(stream) + '.index').read_text().splitlines()]
+    if len(index) != count:
+        raise ValueError('Saved AU index does not contain all source frames')
+    # Annex B parsers may attach the first zero of a four-byte start code to
+    # the preceding AU. Accept only that leading-zero boundary difference.
+    by_presentation = {n: f for n, f in enumerate(info['frames'])}
+    with stream.open('rb') as encoded:
+        for offset, size, presentation in index:
+            frame = by_presentation.get(presentation)
+            if frame is None:
+                raise ValueError('Missing display frame in saved AU index')
+            pos = int(frame['pkt_pos'])
+            if not offset <= pos <= offset + 3:
+                raise ValueError('Decoded display order does not match source PTS index')
+            encoded.seek(offset)
+            if encoded.read(pos - offset) != bytes(pos - offset):
+                raise ValueError('AU parser boundary difference is not leading zeros')
+    output.mkdir(parents=True, exist_ok=False)
+    # Both branches use frame indices on the same timebase, with no range remapping.
+    filters = ('[0:v]format=yuv420p,settb=1/1,setpts=N,split=2[rp][rs];'
+               '[1:v]format=yuv420p,settb=1/1,setpts=N,split=2[dp][ds];'
+               '[dp][rp]psnr=stats_file=psnr.log[p];[ds][rs]ssim=stats_file=ssim.log[s]')
+    command = ['ffmpeg', '-nostdin', '-v', 'info', '-threads', '2',
+               '-f', 'rawvideo', '-pixel_format', report.get('pixel_format', 'NV12').lower(), '-video_size', f'{w}x{h}',
+               '-i', str(raw.resolve()), '-threads', '2', '-i', str(stream.resolve()),
+               '-filter_complex_threads', '2', '-filter_complex', filters,
+               '-map', '[p]', '-map', '[s]', '-f', 'null', '-']
+    with (output / 'ffmpeg.log').open('w') as log:
+        subprocess.run(command, cwd=output, stdout=log, stderr=subprocess.STDOUT, check=True)
+    psnr, ssim = log_rows(output / 'psnr.log'), log_rows(output / 'ssim.log')
+    if len(psnr) != count or len(ssim) != count:
+        raise ValueError('Not all frames received quality scores')
+    result = dict(report_status=report['status'], report_sha256=sha(report_path), bitstream_sha256=sha(stream), source_sha256=sha(raw),
+                  source_frames=count, width=w, height=h, input_fps=report['input_fps'],
+                  requested_bitrate=report['requested_bitrate'],
+                  latency_profile=report['latency_profile'], bitrate_mode=report['requested_bitrate_mode'],
+                  time_delta_rc=report.get('requested_time_delta_rc', 'default'),
+                  actual_bitrate=stream.stat().st_size * 8 * report['input_fps'] / count,
+                  command=command, stream=info['streams'],
+                  frame_types={t: sum(f['pict_type'] == t for f in info['frames']) for t in ('I', 'P', 'B')},
+                  keyframe_indices=[n for n, f in enumerate(info['frames']) if f['key_frame']],
+                  frames=[])
+    for plane in ('y', 'u', 'v'):
+        mse = sum(row['mse_' + plane] for row in psnr) / count
+        result['pooled_psnr_' + plane] = 10 * math.log10(255 ** 2 / mse) if mse else 'Infinity'
+    result['mean_ssim_y'] = sum(row['Y'] for row in ssim) / count
+    for n, (p, s) in enumerate(zip(psnr, ssim)):
+        result['frames'].append(dict(source_index=n, psnr={k: v if math.isfinite(v) else 'Infinity' for k, v in p.items()},
+                                     ssim={k: v if math.isfinite(v) else 'Infinity' for k, v in s.items()}))
+    (output / 'quality.json').write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--index', type=Path)
+    parser.add_argument('--report', type=Path)
+    parser.add_argument('--raw', type=Path)
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    if args.index:
+        index_stream(args.index)
+    elif args.report and args.raw and args.output:
+        evaluate(args.report, args.raw, args.output)
+    else:
+        parser.error('Use --index FILE or --report REPORT --raw SOURCE --output DIRECTORY')
+
+
+if __name__ == '__main__':
+    main()

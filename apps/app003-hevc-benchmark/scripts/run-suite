@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Resumable Q6A codec capacity matrix. Run on the board, headless and exclusive."""
+import argparse
+import contextlib
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import struct
+import subprocess
+import time
+
+
+def load_runner():
+    path = Path(__file__).with_name('run-latency')
+    if not path.exists():
+        path = Path(__file__).with_name('hevc-benchmark-latency')
+    loader = importlib.machinery.SourceFileLoader('latency', str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def save(path, value):
+    temp = path.with_suffix(path.suffix + '.tmp')
+    temp.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
+    temp.replace(path)
+
+
+def bandwidth(report):
+    if not report.get('bandwidth_valid'):
+        return None
+    buckets = report['bandwidth_100ms_bytes']
+    result = {}
+    for count in (1, 10):
+        values = [sum(buckets[i:i + count]) * 80 / count
+                  for i in range(0, len(buckets) - count + 1, count)]
+        result[str(count * 100) + 'ms'] = {
+            'min_bps': min(values), 'mean_bps': sum(values) / len(values),
+            'max_bps': max(values), 'windows': len(values)}
+    return result
+
+
+def point(width, height, fps, mode, **kwargs):
+    config = dict(width=width, height=height, fps=fps, mode=mode, **kwargs)
+    # GStreamer uses frame IDs as V4L2 timestamps. Built-in benchmark cases
+    # explicitly select frame-rate-based RC; custom cases preserve user choices.
+    if mode != 'decode':
+        config.setdefault('time_delta_rc', 'off')
+    return config
+
+
+class Suite:
+    def __init__(self, args):
+        self.args = args
+        self.root = args.output
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.runner = load_runner()
+        self.cancelled = False
+        self.binary_sha = digest(args.binary)
+        self.inventory = self.discover()
+        save(self.root / 'inventory.json', self.inventory)
+        self.results = []
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, self.stop)
+
+    def stop(self, *_):
+        self.cancelled = True
+
+    def discover(self):
+        commands = [['uname', '-a'], ['v4l2-ctl', '--list-devices'],
+                    ['gst-inspect-1.0', 'v4l2h265enc'], ['gst-inspect-1.0', 'v4l2h265dec']]
+        for dev in ('/dev/video32', '/dev/video33'):
+            for query in ('--all', '--list-ctrls-menus', '--list-formats', '--list-formats-out',
+                          '--list-framesizes=HEVC', '--list-framesizes=NV12'):
+                commands.append(['v4l2-ctl', '-d', dev, query])
+        outputs = []
+        for command in commands:
+            try:
+                r = subprocess.run(command, capture_output=True, text=True, timeout=15)
+                outputs.append(dict(command=command, exit_code=r.returncode, stdout=r.stdout, stderr=r.stderr))
+            except (OSError, subprocess.TimeoutExpired) as e:
+                outputs.append(dict(command=command, error=str(e)))
+        dt = Path('/sys/firmware/devicetree/base/soc@0/video-codec@aa00000/opp-table')
+        rates = sorted(struct.unpack('>Q', p.read_bytes())[0] for p in dt.glob('*/opp-hz'))
+        return dict(binary_sha256=self.binary_sha, commands=outputs, opp_hz=rates,
+                    compatible=Path('/proc/device-tree/compatible').read_bytes().decode().split('\0'),
+                    snapshot=self.runner.snapshot(), timestamp=time.time())
+
+    def trial(self, phase, config, setting='default', repeat=0, seconds=60, warmup=5, count=1):
+        spec = dict(config=config, setting=setting, repeat=repeat, seconds=seconds,
+                    warmup=warmup, count=count, binary_sha256=self.binary_sha, vpu_hz=self.args.vpu_hz,
+                    runner_sha256=digest(__file__),
+                    input_hashes={key: digest(value) for key, value in config.items()
+                                  if key in ('input_raw', 'input_nv12', 'input_hevc')},
+                    index_hashes={key: digest(str(value) + '.index') for key, value in config.items() if key == 'input_hevc'})
+        key = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+        directory = self.root / phase / key
+        done = directory / 'trial.json'
+        if done.exists():
+            old = json.loads(done.read_text())
+            if old['spec'] == spec and old['status'] in ('PASS', 'FAIL'):
+                self.results.append(old)
+                return old
+        if self.cancelled:
+            raise InterruptedError('Suite cancelled')
+        directory.mkdir(parents=True, exist_ok=True)
+        print('START', phase, config, setting, 'repeat', repeat, 'sessions', count, flush=True)
+        state = dict(spec=spec, directory=str(directory), status='RUNNING',
+                     before=self.runner.snapshot(), samples=[], reports=[], commands=[])
+        save(done, state)
+        processes, logs = [], []
+        try:
+            self.runner.require_safe_video_temperature(state['before'])
+            with contextlib.ExitStack() as stack:
+                governors = stack.enter_context(self.runner.Governors())
+                hz = self.args.vpu_hz if setting == 'performance' else 0
+                stack.enter_context(self.runner.VpuVote(hz))
+                if setting == 'performance':
+                    governors.enable_performance()
+                def reap():
+                    for child in processes:
+                        if child.poll() is None:
+                            child.terminate()
+                    for child in processes:
+                        try:
+                            child.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            child.kill(); child.wait()
+                stack.callback(reap)
+                for session in range(count):
+                    out = directory / ('session-' + str(session) + '-' + str(time.time_ns()))
+                    command = [str(self.args.binary), '--seconds', str(seconds), '--warmup', str(warmup),
+                               '--quality', 'off', '--output', str(out)]
+                    for key, value in config.items():
+                        command += ['--' + key.replace('_', '-'), str(value)]
+                    log = (directory / ('console-' + str(session) + '.log')).open('w')
+                    logs.append(log)
+                    processes.append(subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT))
+                    state['commands'].append(command)
+                deadline = time.monotonic() + seconds + warmup + 300
+                while any(p.poll() is None for p in processes):
+                    sample = self.runner.snapshot()
+                    state['samples'].append(sample)
+                    self.runner.require_safe_video_temperature(sample)
+                    if self.cancelled:
+                        raise InterruptedError('Suite cancelled')
+                    if time.monotonic() > deadline:
+                        raise TimeoutError('Trial watchdog')
+                    time.sleep(1)
+                state['exit_codes'] = [p.returncode for p in processes]
+                for command in state['commands']:
+                    out = Path(command[command.index('--output') + 1])
+                    found = list(out.glob('*/report.json'))
+                    if len(found) != 1:
+                        raise RuntimeError('Expected one report per session')
+                    report = json.loads(found[0].read_text())
+                    state['reports'].append(dict(path=str(found[0]), sha256=digest(found[0]),
+                                                  status=report['status'], encode_fps=report['encode_fps'],
+                                                  decode_fps=report['decode_fps'], bandwidth=bandwidth(report)))
+                state['status'] = 'PASS' if all(p.returncode == 0 for p in processes) else 'FAIL'
+        except BaseException as error:
+            state['status'] = 'CANCELLED' if isinstance(error, (InterruptedError, KeyboardInterrupt)) else 'FAIL'
+            state['error'] = str(error)
+            if isinstance(error, (InterruptedError, KeyboardInterrupt)):
+                self.cancelled = True
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+            for process in processes:
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill(); process.wait()
+            for log in logs:
+                log.close()
+            state['after'] = self.runner.snapshot()
+            save(done, state)
+            self.results.append(state)
+        print('DONE', state['status'], directory, flush=True)
+        if self.cancelled:
+            raise InterruptedError('Suite cancelled')
+        # Cooling is bounded, never silently continue above the stop threshold.
+        for _ in range(120):
+            try:
+                self.runner.require_safe_video_temperature(self.runner.snapshot())
+                break
+            except RuntimeError:
+                if self.cancelled:
+                    raise InterruptedError('Suite cancelled')
+                time.sleep(1)
+        else:
+            raise RuntimeError('Board remains too hot; resume after cooling')
+        return state
+
+    def decoder_config(self, config):
+        if config['mode'] == 'decode' and self.args.decode_corpora:
+            config = dict(config)
+            path = self.args.decode_corpora / (str(config['width']) + 'x' + str(config['height']) + '-' + str(config['fps']) + '.h265')
+            if not path.exists():
+                raise RuntimeError('Missing independent decode corpus: ' + str(path))
+            config['input_hevc'] = str(path.resolve())
+        return config
+
+    def run(self):
+        dimensions = [(640, 480), (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (4096, 4096)]
+        if self.args.phase == 'smoke':
+            for mode in ('encode', 'decode', 'loopback'):
+                self.trial('smoke', point(1280, 720, '60000/1001', mode, pacing='realtime'), seconds=3, warmup=1)
+            return
+        if self.args.phase == 'probe':
+            return
+        if self.args.phase == 'custom':
+            cases = json.loads(self.args.cases.read_text())
+            for item in cases:
+                self.trial('custom', **item)
+            return
+        scans = []
+        for w, h in dimensions:
+            for fps in (24, 30, 60, 120):
+                for mode in ('encode', 'decode'):
+                    for setting in ('default', 'performance'):
+                        config = self.decoder_config(point(w, h, fps, mode, pacing='unpaced'))
+                        result = self.trial('scan', config, setting, seconds=10, warmup=2)
+                        scans.append(result)
+        if self.args.phase == 'scan':
+            return
+        selected = {(1920, 1080, 30), (1920, 1080, 60)}
+        for w, h in dimensions:
+            for mode in ('encode', 'decode'):
+                capacity = []
+                for fps in (24, 30, 60, 120):
+                    matches = [r for r in scans if r['spec']['config'] == self.decoder_config(point(w, h, fps, mode, pacing='unpaced'))]
+                    ok = any(r['status'] == 'PASS' and r['reports'][0][mode + '_fps'] >= fps * .99 for r in matches)
+                    capacity.append((fps, ok))
+                good = [fps for fps, ok in capacity if ok]
+                if good:
+                    selected.add((w, h, max(good)))
+                    bad = [fps for fps, ok in capacity if not ok and fps > max(good)]
+                    if bad:
+                        selected.add((w, h, min(bad)))
+        save(self.root / 'selected.json', sorted(selected))
+        for w, h, fps in sorted(selected):
+            for mode, pacing in (('encode', 'unpaced'), ('decode', 'unpaced'),
+                                 ('encode', 'realtime'), ('decode', 'realtime'), ('loopback', 'realtime')):
+                for repeat in range(3):
+                    for setting in ('default', 'performance'):
+                        self.trial('formal', self.decoder_config(point(w, h, fps, mode, pacing=pacing)), setting, repeat)
+        # Concurrency: stop at the first failed level for each configuration.
+        stable = []
+        for fps in (30, 60):
+            for mode in ('encode', 'decode', 'loopback'):
+                for setting in ('default', 'performance'):
+                    winner = None
+                    for count in (1, 2, 4, 8):
+                        result = self.trial('concurrency', self.decoder_config(point(1920, 1080, fps, mode, pacing='realtime')),
+                                            setting, count=count)
+                        if result['status'] != 'PASS':
+                            break
+                        winner = result['spec']
+                    if winner:
+                        stable.append(winner)
+        save(self.root / 'stable-concurrency.json', stable)
+        soak = set()
+        successful = [r for r in self.results if r['status'] == 'PASS' and r['spec']['config'].get('pacing') == 'realtime']
+        for mode in ('encode', 'decode', 'loopback'):
+            candidates = [r for r in successful if r['spec']['config']['mode'] == mode and r['spec']['count'] == 1]
+            if candidates:
+                best = max(candidates, key=lambda r: r['spec']['config']['width'] * r['spec']['config']['height'] * float(r['spec']['config']['fps']))
+                spec = best['spec']
+                soak.add(json.dumps(dict(config=spec['config'], setting=spec['setting'], count=1), sort_keys=True))
+        candidates = [r for r in successful if r['spec']['config']['width'] == 1920 and r['spec']['config']['fps'] == 60 and r['spec']['count'] == 1 and r['spec']['config']['mode'] == 'loopback']
+        if candidates:
+            spec = candidates[-1]['spec']
+            soak.add(json.dumps(dict(config=spec['config'], setting=spec['setting'], count=1), sort_keys=True))
+        if stable:
+            spec = max(stable, key=lambda s: s['count'] * s['config']['fps'])
+            soak.add(json.dumps(dict(config=spec['config'], setting=spec['setting'], count=spec['count']), sort_keys=True))
+        for item in sorted(soak):
+            self.trial('stability', **json.loads(item), seconds=600)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--phase', choices=['probe', 'smoke', 'scan', 'full', 'custom'], default='full')
+    parser.add_argument('--cases', type=Path)
+    parser.add_argument('--decode-corpora', type=Path)
+    parser.add_argument('--vpu-hz', type=int, default=0)
+    args = parser.parse_args()
+    args.binary = args.binary.resolve()
+    args.output = args.output.resolve()
+    with open('/var/tmp/hevc-suite.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Do not interrupt existing codec users.
+        for fd in Path('/proc').glob('[0-9]*/fd/*'):
+            try:
+                if str(fd.resolve()) in ('/dev/video32', '/dev/video33'):
+                    raise RuntimeError('Codec already in use: ' + str(fd))
+            except (FileNotFoundError, PermissionError):
+                pass
+        suite = Suite(args)
+        try:
+            suite.run()
+        finally:
+            save(args.output / 'index.json', suite.results)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

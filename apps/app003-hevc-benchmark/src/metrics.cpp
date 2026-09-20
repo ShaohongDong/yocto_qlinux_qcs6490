@@ -33,14 +33,14 @@ std::string number(double value) {
     return out.str();
 }
 std::string Distribution::json() const {
-    if (values.empty()) return "{\"count\":0,\"mean\":null,\"p50\":null,\"p95\":null,\"max\":null}";
+    if (values.empty()) return "{\"count\":0,\"mean\":null,\"p50\":null,\"p95\":null,\"p99\":null,\"max\":null}";
     auto sorted = values;
     std::sort(sorted.begin(), sorted.end());
     auto percentile = [&](double p) { return sorted[size_t(std::ceil(p * sorted.size())) - 1]; };
     return "{\"count\":" + std::to_string(values.size()) + ",\"mean\":" +
         number(std::accumulate(values.begin(), values.end(), 0.0) / values.size()) +
         ",\"p50\":" + number(percentile(.50)) + ",\"p95\":" + number(percentile(.95)) +
-        ",\"max\":" + number(sorted.back()) + "}";
+        ",\"p99\":" + number(percentile(.99)) + ",\"min\":" + number(sorted.front()) + ",\"max\":" + number(sorted.back()) + "}";
 }
 double LumaError::psnr() const {
     if (!pixels) return std::numeric_limits<double>::quiet_NaN();

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 schema_version: 1
 name: app003-hevc-benchmark
-summary: Q6A 1080p30 hardware HEVC latency and Y-PSNR benchmark
+summary: Q6A hardware HEVC capacity, latency, bandwidth and quality benchmark
 license:
   expression: MIT
   files:
@@ -14,10 +14,11 @@ build:
   options: [-DBUILD_TESTING=OFF]
 check: [/usr/bin/hevc-benchmark, --self-test]
 dependencies:
-  build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base]
+  build: [gtk+3, gstreamer1.0, gstreamer1.0-plugins-base, zstd]
   runtime:
   - python3-core
   - python3-json
+  - python3-crypt
   - python3-statistics
   - gstreamer1.0-plugins-good-video4linux2
   - gstreamer1.0-plugins-bad-videoparsersbad

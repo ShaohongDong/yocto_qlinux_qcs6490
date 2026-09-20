@@ -6,7 +6,7 @@
 int main() {
     if (int result = hevc::self_test()) return result;
     hevc::Distribution d{{1, 2, 3, 4, 100}};
-    if (d.json() != "{\"count\":5,\"mean\":22,\"p50\":3,\"p95\":100,\"max\":100}") return 10;
+    if (d.json() != "{\"count\":5,\"mean\":22,\"p50\":3,\"p95\":100,\"p99\":100,\"min\":1,\"max\":100}") return 10;
     if (hevc::Distribution{}.json().find("null") == std::string::npos) return 11;
     uint8_t a[4] = {}, b[4] = {255, 255, 255, 255};
     if (hevc::compare_luma(a, 2, b, 2, 2, 2).psnr() != 0) return 12;

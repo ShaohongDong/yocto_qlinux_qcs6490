@@ -14,6 +14,12 @@ struct Options {
     std::string pacing = "auto", quality_mode = "full", input_nv12;
     int operating_rate = 0; // 0 preserves driver default; otherwise decoder fps in Q16.
     int seconds = 60, warmup = 5, bitrate = 8000000;
+    int width = 1920, height = 1080, fps_num = 30, fps_den = 1;
+    int frame_limit = 0;
+    std::string pixel_format = "NV12";
+    std::string input_hevc, bitrate_mode = "default", pattern = "ball";
+    std::string time_delta_rc = "default";
+    bool save_bitstream = false;
     bool preview = false;
 };
 struct View {

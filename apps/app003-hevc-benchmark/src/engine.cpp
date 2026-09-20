@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "engine.hpp"
+#include "raw_input.hpp"
+#include <set>
+#include <gst/allocators/gstdmabuf.h>
+#include <linux/dma-heap.h>
+#include <linux/dma-buf.h>
+#include <sys/mman.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
 #include <gst/video/video.h>
@@ -30,6 +36,7 @@ constexpr size_t corpus_limit = 128 * 1024 * 1024;
 struct Packet {
     std::vector<uint8_t> data;
     bool delta = false;
+    size_t presentation = 0;
 };
 std::string device_info(const std::string& path) {
     if (path.empty()) return "null";
@@ -53,6 +60,11 @@ struct Control {
 std::vector<Control> requested_controls(const Options& o, bool encoder) {
     std::vector<Control> result;
     if (encoder) result.push_back({"video_bitrate", V4L2_CID_MPEG_VIDEO_BITRATE, o.bitrate});
+    if (encoder && o.bitrate_mode != "default")
+        result.push_back({"video_bitrate_mode", V4L2_CID_MPEG_VIDEO_BITRATE_MODE,
+                          o.bitrate_mode == "cbr" ? V4L2_MPEG_VIDEO_BITRATE_MODE_CBR : V4L2_MPEG_VIDEO_BITRATE_MODE_VBR});
+    if (encoder && o.time_delta_rc != "default")
+        result.push_back({"time_delta_based_rc", 0x0099200d, o.time_delta_rc == "on" ? 1 : 0});
     bool low = o.latency_profile == "low" || o.latency_profile == (encoder ? "encode-low" : "decode-low");
     if (low) {
         result.push_back({"lowlatency_mode", 0x00992003, 1});
@@ -101,9 +113,16 @@ struct Session {
     Frames frames;
     std::map<uint64_t, std::vector<uint8_t>> originals;
     std::vector<Packet> corpus;
-    std::vector<uint8_t> raw_corpus;
+    RawInput raw;
+    int width, height;
+    double fps;
+    size_t raw_frame_bytes;
+    double read_wait_ms = 0;
+    std::ofstream bitstream, bitstream_index;
+    size_t saved_bytes = 0;
+    std::vector<uint64_t> bandwidth;
+    double first_output = -1, last_input = -1;
     std::string raw_sha256;
-    static constexpr size_t raw_frame_bytes = size_t(width) * height * 3 / 2;
     size_t corpus_bytes = 0, fed = 0, preview_count = 0;
     std::string error, enc_caps, dec_caps, enc_device, dec_device;
     std::string pipeline_text;
@@ -112,8 +131,11 @@ struct Session {
     long rss_kib = 0;
     bool eos = false, stopped = false;
     bool source_eos_sent = false; // Accessed only by the serialized source streaming thread.
-    Session(Options o, std::atomic<bool>& c, View* v) : options(std::move(o)), cancel(c), view(v) {}
+    Session(Options o, std::atomic<bool>& c, View* v) : options(std::move(o)), cancel(c), view(v), width(options.width), height(options.height),
+        fps(double(options.fps_num) / options.fps_den), raw_frame_bytes(size_t(width) * height * 3 / 2),
+        bandwidth(options.seconds * 10, 0) {}
     ~Session() {
+        raw.stop();
         if (pipeline) {
             gst_element_set_state(pipeline, GST_STATE_NULL);
             gst_object_unref(pipeline);
@@ -145,16 +167,16 @@ struct Session {
         gst_object_unref(f);
         if (!valid) throw std::runtime_error("Only explicit V4L2 HEVC hardware factories are accepted: " + name);
     }
-    static std::vector<uint8_t> luma(GstBuffer* buffer, GstCaps* caps) {
+    static std::vector<uint8_t> luma(GstBuffer* buffer, GstCaps* caps, int width = 1920, int height = 1080) {
         GstVideoInfo info;
-        if (!caps || !gst_video_info_from_caps(&info, caps) || GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_NV12)
+        if (!caps || !gst_video_info_from_caps(&info, caps) || (GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_NV12 && GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_NV21))
             throw std::runtime_error("Y-PSNR requires mappable linear 8-bit NV12; compressed UBWC is not linear NV12");
         int x = 0, y = 0;
         if (auto* crop = gst_buffer_get_video_crop_meta(buffer)) {
-            if (crop->width != width || crop->height != height) throw std::runtime_error("Unexpected visible crop size");
+            if (crop->width != unsigned(width) || crop->height != unsigned(height)) throw std::runtime_error("Unexpected visible crop size");
             x = crop->x; y = crop->y;
         } else if (GST_VIDEO_INFO_WIDTH(&info) != width || GST_VIDEO_INFO_HEIGHT(&info) != height) {
-            throw std::runtime_error("Expected visible 1920x1080 frame");
+            throw std::runtime_error("Unexpected visible frame dimensions");
         }
         if (x < 0 || y < 0 || x + width > GST_VIDEO_INFO_WIDTH(&info) || y + height > GST_VIDEO_INFO_HEIGHT(&info))
             throw std::runtime_error("Crop outside frame");
@@ -181,7 +203,7 @@ struct Session {
         // encoder accepts it. Serialize EOS behind every previously forwarded
         // frame instead; the execute() watchdog still bounds stalled drains.
         if (s.options.mode != "prepare" && !s.app_input() &&
-            s.start > 0 && monotonic_ms() >= s.end()) {
+            s.start > 0 && ((s.options.frame_limit && s.frames.rows.size() >= size_t(s.options.frame_limit)) || (!s.options.frame_limit && monotonic_ms() >= s.end()))) {
             if (!s.source_eos_sent) {
                 s.source_eos_sent = true;
                 if (!gst_pad_push_event(pad, gst_event_new_eos()))
@@ -196,7 +218,7 @@ struct Session {
             std::vector<uint8_t> y;
             if (s.quality()) {
                 auto* caps = gst_pad_get_current_caps(pad);
-                try { y = luma(buffer, caps); }
+                try { y = luma(buffer, caps, s.width, s.height); }
                 catch (...) { if (caps) gst_caps_unref(caps); throw; }
                 if (caps) gst_caps_unref(caps);
             }
@@ -207,6 +229,7 @@ struct Session {
             f.source_index = s.frames.rows.size();
             f.source_before_copy = before_copy;
             f.source = monotonic_ms();
+            s.last_input = f.source;
             s.frames.rows.emplace(pts, f);
             if (s.quality()) {
                 if (s.originals.size() >= 120) throw std::runtime_error("More than 120 unmatched reference frames; refusing unbounded memory growth");
@@ -224,6 +247,9 @@ struct Session {
         const double time = monotonic_ms();
         auto pts = GST_BUFFER_PTS(buffer);
         std::lock_guard<std::mutex> lock(s.mutex);
+        if (p.encoder_output && s.measured(time))
+            s.bandwidth.at(size_t((time - s.begin()) / 100.)) += gst_buffer_get_size(buffer);
+        if ((p.encoder_output || p.field == &Frame::decode_out) && s.first_output < 0) s.first_output = time;
         if (p.encoder_output && s.frames.rows.count(pts))
             s.frames.rows.at(pts).encoded_bytes += gst_buffer_get_size(buffer);
         if ((p.encoder_output && s.enc_controls == "null") ||
@@ -275,6 +301,7 @@ struct Session {
                 if (gst_buffer_extract(buffer, 0, packet.data.data(), size) != size) throw std::runtime_error("Cannot read encoded buffer");
                 packet.delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
                 s.corpus_bytes += size;
+                packet.presentation = s.corpus.size();
                 s.corpus.push_back(std::move(packet));
             }
         } catch (const std::exception& e) {
@@ -290,7 +317,7 @@ struct Session {
         try {
             if (s.quality()) {
                 auto* buffer = gst_sample_get_buffer(sample);
-                auto decoded = luma(buffer, gst_sample_get_caps(sample));
+                auto decoded = luma(buffer, gst_sample_get_caps(sample), s.width, s.height);
                 const uint64_t pts = GST_BUFFER_PTS(buffer);
                 std::vector<uint8_t> reference;
                 {
@@ -300,7 +327,7 @@ struct Session {
                     reference = std::move(it->second);
                     s.originals.erase(it);
                 }
-                auto result = compare_luma(reference.data(), width, decoded.data(), width, width, height);
+                auto result = compare_luma(reference.data(), s.width, decoded.data(), s.width, s.width, s.height);
                 std::lock_guard<std::mutex> lock(s.mutex);
                 auto& row = s.frames.rows.at(pts);
                 row.y = result; row.quality = true;
@@ -334,38 +361,151 @@ struct Session {
     }
     static void need_data(GstAppSrc* src, guint, gpointer data) {
         auto& s = *static_cast<Session*>(data);
-        if (s.realtime()) {
-            const double deadline = s.start + s.fed * 1000. / fps;
-            while (!s.cancel && monotonic_ms() < deadline && monotonic_ms() < s.end())
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        try {
+            if (s.realtime()) {
+                const double deadline = s.start + s.fed * 1000. / s.fps;
+                while (!s.cancel && monotonic_ms() < deadline &&
+                       (s.options.frame_limit || monotonic_ms() < s.end()))
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (s.cancel || (s.options.frame_limit && s.fed >= size_t(s.options.frame_limit)) ||
+                (s.options.mode != "prepare" && !s.options.frame_limit && monotonic_ms() >= s.end()) ||
+                (s.options.mode == "prepare" && s.fed >= 60)) {
+                gst_app_src_end_of_stream(src); return;
+            }
+            const uint8_t* bytes = nullptr;
+            size_t size = 0, presentation = s.fed;
+            bool delta = false;
+            std::vector<uint8_t> raw_frame;
+            if (s.options.mode == "decode") {
+                if (s.corpus.empty()) throw std::runtime_error("Empty preloaded HEVC corpus");
+                const auto& packet = s.corpus[s.fed % s.corpus.size()];
+                bytes = packet.data.data(); size = packet.data.size(); delta = packet.delta;
+                presentation = (s.fed / s.corpus.size()) * s.corpus.size() + packet.presentation;
+            } else {
+                double before = monotonic_ms();
+                raw_frame = s.raw.next();
+                s.read_wait_ms += monotonic_ms() - before;
+                bytes = raw_frame.data(); size = raw_frame.size();
+                if (!size) { gst_app_src_end_of_stream(src); return; }
+            }
+            GstBuffer* buffer = nullptr;
+            if (s.options.mode == "decode") {
+                buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
+                if (!buffer) throw std::runtime_error("Input allocation failed");
+                gst_buffer_fill(buffer, 0, bytes, size);
+            } else {
+                const RawLayout layout(s.width, s.height);
+                const size_t stride = layout.stride, scanlines = layout.y_rows, allocated = layout.bytes;
+                if (size != s.raw_frame_bytes) throw std::runtime_error("Unexpected raw frame size");
+                int heap = open("/dev/dma_heap/system", O_RDWR | O_CLOEXEC);
+                if (heap < 0) throw std::runtime_error("Cannot open DMA heap");
+                dma_heap_allocation_data allocation{};
+                allocation.len = allocated; allocation.fd_flags = O_RDWR | O_CLOEXEC;
+                int result = ioctl(heap, DMA_HEAP_IOCTL_ALLOC, &allocation); close(heap);
+                if (result < 0) throw std::runtime_error("DMA heap allocation failed");
+                int fd = allocation.fd;
+                auto* mapped = static_cast<uint8_t*>(mmap(nullptr, allocated, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+                if (mapped == MAP_FAILED) { close(fd); throw std::runtime_error("DMA mapping failed"); }
+                dma_buf_sync sync{}; sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE;
+                if (ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) { munmap(mapped, allocated); close(fd); throw std::runtime_error("DMA sync start failed"); }
+                std::memset(mapped, 0, allocated);
+                for (int row = 0; row < s.height; ++row)
+                    std::memcpy(mapped + row * stride, bytes + row * s.width, s.width);
+                for (int row = 0; row < s.height / 2; ++row)
+                    std::memcpy(mapped + stride * scanlines + row * stride, bytes + s.width * s.height + row * s.width, s.width);
+                sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
+                if (ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) { munmap(mapped, allocated); close(fd); throw std::runtime_error("DMA sync end failed"); }
+                munmap(mapped, allocated);
+                auto* allocator = gst_dmabuf_allocator_new();
+                auto* memory = gst_dmabuf_allocator_alloc(allocator, fd, allocated);
+                gst_object_unref(allocator);
+                if (!memory) { close(fd); throw std::runtime_error("Cannot wrap DMA buffer"); }
+                buffer = gst_buffer_new(); gst_buffer_append_memory(buffer, memory);
+                gsize offsets[GST_VIDEO_MAX_PLANES] = {0, stride * scanlines, 0, 0};
+                gint strides[GST_VIDEO_MAX_PLANES] = {int(stride), int(stride), 0, 0};
+                auto* meta = gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE,
+                    s.options.pixel_format == "NV12" ? GST_VIDEO_FORMAT_NV12 : GST_VIDEO_FORMAT_NV21,
+                    s.width, s.height, 2, offsets, strides);
+                GstVideoAlignment align{}; align.padding_right = stride - s.width; align.padding_bottom = scanlines - s.height;
+                if (!meta || !gst_video_meta_set_alignment(meta, align)) {
+                    gst_buffer_unref(buffer); throw std::runtime_error("Cannot describe DMA plane alignment");
+                }
+            }
+            GST_BUFFER_PTS(buffer) = gst_util_uint64_scale(presentation, GST_SECOND * s.options.fps_den, s.options.fps_num);
+            GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
+            GST_BUFFER_DURATION(buffer) = gst_util_uint64_scale(1, GST_SECOND * s.options.fps_den, s.options.fps_num);
+            if (delta) GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+            ++s.fed;
+            const auto result = gst_app_src_push_buffer(src, buffer);
+            if (result != GST_FLOW_OK && result != GST_FLOW_FLUSHING && result != GST_FLOW_EOS)
+                throw std::runtime_error("Failed to feed input");
+        } catch (const std::exception& e) { s.fail(e.what()); gst_app_src_end_of_stream(src); }
+    }
+    static std::string hash_file(const std::string& path) {
+        std::ifstream stream(path, std::ios::binary);
+        if (!stream) throw std::runtime_error("Cannot open input for hashing");
+        auto* checksum = g_checksum_new(G_CHECKSUM_SHA256);
+        std::vector<char> block(1024 * 1024);
+        while (stream.read(block.data(), block.size()) || stream.gcount())
+            g_checksum_update(checksum, reinterpret_cast<const guchar*>(block.data()), stream.gcount());
+        std::string result = g_checksum_get_string(checksum);
+        g_checksum_free(checksum);
+        if (!stream.eof()) throw std::runtime_error("Input hash read error");
+        return result;
+    }
+    static std::string hash_raw(const std::string& path) {
+        RawStream stream(path);
+        std::unique_ptr<GChecksum, decltype(&g_checksum_free)> checksum(g_checksum_new(G_CHECKSUM_SHA256), g_checksum_free);
+        std::vector<uint8_t> block(1024 * 1024);
+        uint64_t total = 0;
+        while (size_t size = stream.read(block.data(), block.size())) {
+            g_checksum_update(checksum.get(), block.data(), size); total += size;
         }
-        if (s.cancel || (s.options.mode != "prepare" && monotonic_ms() >= s.end()) ||
-            (s.options.mode == "prepare" && s.fed >= 60)) {
-            gst_app_src_end_of_stream(src); return;
+        if (total != stream.size) throw std::runtime_error("Raw input content size mismatch");
+        return g_checksum_get_string(checksum.get());
+    }
+    void load_hevc() {
+        raw_sha256 = hash_file(options.input_hevc);
+        std::ifstream stream(options.input_hevc, std::ios::binary);
+        stream.exceptions(std::ios::badbit | std::ios::failbit);
+        std::ifstream index(options.input_hevc + ".index");
+        if (!index) throw std::runtime_error("HEVC requires .index: offset size presentation_index");
+        size_t offset, size, presentation, expected_offset = 0;
+        std::set<size_t> seen;
+        std::string line;
+        while (std::getline(index, line)) {
+            std::istringstream row(line);
+            std::string trailing;
+            if (!(row >> offset >> size >> presentation) || (row >> trailing))
+                throw std::runtime_error("Malformed HEVC access-unit index line");
+            if (offset != expected_offset || !size || size > corpus_limit - corpus_bytes || !seen.insert(presentation).second)
+                throw std::runtime_error("Invalid/oversized HEVC access-unit index");
+            Packet packet; packet.data.resize(size); packet.presentation = presentation;
+            stream.read(reinterpret_cast<char*>(packet.data.data()), size);
+            packet.delta = !corpus.empty();
+            corpus.push_back(std::move(packet)); corpus_bytes += size; expected_offset += size;
         }
-        const uint8_t* bytes = nullptr;
-        size_t size = 0;
-        bool delta = false;
-        if (s.options.mode == "decode") {
-            if (s.corpus.empty()) { s.fail("Empty preloaded HEVC corpus"); gst_app_src_end_of_stream(src); return; }
-            const auto& packet = s.corpus[s.fed % s.corpus.size()];
-            bytes = packet.data.data(); size = packet.data.size(); delta = packet.delta;
-        } else {
-            if (s.raw_corpus.empty()) { s.fail("Empty raw corpus"); gst_app_src_end_of_stream(src); return; }
-            size = raw_frame_bytes;
-            bytes = s.raw_corpus.data() + (s.fed % 60) * size;
-        }
-        auto* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
-        if (!buffer) { s.fail("Input allocation failed"); gst_app_src_end_of_stream(src); return; }
-        gst_buffer_fill(buffer, 0, bytes, size);
-        GST_BUFFER_PTS(buffer) = gst_util_uint64_scale(s.fed, GST_SECOND, fps);
-        GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
-        GST_BUFFER_DURATION(buffer) = gst_util_uint64_scale(1, GST_SECOND, fps);
-        if (delta) GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-        ++s.fed;
-        const auto result = gst_app_src_push_buffer(src, buffer);
-        if (result != GST_FLOW_OK && result != GST_FLOW_FLUSHING && result != GST_FLOW_EOS)
-            s.fail("Failed to feed preloaded input");
+        if (!index.eof() || corpus.empty() || *seen.rbegin() != corpus.size() - 1 ||
+            expected_offset != std::filesystem::file_size(options.input_hevc))
+            throw std::runtime_error("Incomplete HEVC access-unit index");
+    }
+    static GstPadProbeReturn save_probe(GstPad*, GstPadProbeInfo* info, gpointer data) {
+        auto& s = *static_cast<Session*>(data);
+        auto* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+        if (!buffer) return GST_PAD_PROBE_OK;
+        try {
+            size_t size = gst_buffer_get_size(buffer);
+            std::vector<uint8_t> bytes(size);
+            if (gst_buffer_extract(buffer, 0, bytes.data(), size) != size) throw std::runtime_error("Cannot save encoded AU");
+            auto pts = GST_BUFFER_PTS(buffer);
+            if (pts == GST_CLOCK_TIME_NONE) throw std::runtime_error("Saved AU has no PTS");
+            size_t presentation = gst_util_uint64_scale_round(pts, s.options.fps_num, GST_SECOND * s.options.fps_den);
+            s.bitstream.write(reinterpret_cast<const char*>(bytes.data()), size);
+            s.bitstream_index << s.saved_bytes << ' ' << size << ' ' << presentation << '\n';
+            s.saved_bytes += size;
+        } catch (const std::exception& e) { s.fail(e.what()); return GST_PAD_PROBE_DROP; }
+        return GST_PAD_PROBE_OK;
     }
     static void connect_sink(GstElement* pipeline, const char* name, GstFlowReturn (*callback)(GstAppSink*, gpointer), Session* s) {
         auto* element = gst_bin_get_by_name(GST_BIN(pipeline), name);
@@ -380,26 +520,20 @@ struct Session {
         if (options.mode == "decode") {
             p << "appsrc name=input format=time is-live=" << (realtime() ? "true" : "false")
               << " block=true max-bytes=2097152 "
-                 "caps=\"video/x-h265,stream-format=byte-stream,alignment=au,width=1920,height=1080,framerate=30/1\" ! ";
+                 "caps=\"video/x-h265,stream-format=byte-stream,alignment=au,width=" << width << ",height=" << height << ",framerate=" << options.fps_num << "/" << options.fps_den << "\" ! ";
         } else {
             if (!options.input_nv12.empty()) {
-                if (std::filesystem::file_size(options.input_nv12) != raw_frame_bytes * 60)
-                    throw std::runtime_error("Raw corpus must contain exactly 60 tightly packed 1080p NV12 frames");
-                raw_corpus.resize(raw_frame_bytes * 60);
-                std::ifstream input(options.input_nv12, std::ios::binary);
-                input.exceptions(std::ios::failbit | std::ios::badbit);
-                input.read(reinterpret_cast<char*>(raw_corpus.data()), raw_corpus.size());
-                gchar* digest = g_compute_checksum_for_data(G_CHECKSUM_SHA256, raw_corpus.data(), raw_corpus.size());
-                raw_sha256 = digest; g_free(digest);
+                raw_sha256 = hash_raw(options.input_nv12);
+                raw.open(options.input_nv12, raw_frame_bytes);
                 p << "appsrc name=input format=time is-live=" << (realtime() ? "true" : "false")
-                  << " block=true max-bytes=3110400 caps=\"video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1,colorimetry=bt709\"";
+                  << " block=true max-bytes=3110400 caps=\"video/x-raw,format=" << options.pixel_format << ",width=" << width << ",height=" << height << ",framerate=" << options.fps_num << "/" << options.fps_den << ",colorimetry=bt709\"";
             } else {
-                p << "videotestsrc name=input pattern=ball is-live=" << (realtime() ? "true" : "false");
+                p << "videotestsrc name=input pattern=" << options.pattern << " is-live=" << (realtime() ? "true" : "false");
                 if (options.mode == "prepare") p << " num-buffers=60";
             }
-            p << " ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1,colorimetry=bt709 "
-                 "! identity name=reference ! " << options.encoder << " name=encoder "
-                 "! video/x-h265,profile=main ! h265parse config-interval=-1 "
+            p << " ! video/x-raw,format=" << options.pixel_format << ",width=" << width << ",height=" << height << ",framerate=" << options.fps_num << "/" << options.fps_den << ",colorimetry=bt709 "
+                 "! identity name=reference ! " << options.encoder << " name=encoder " << (!options.input_nv12.empty() ? "output-io-mode=dmabuf-import " : "") <<
+                 "! video/x-h265,profile=main ! h265parse name=parser config-interval=-1 "
                  "! video/x-h265,stream-format=byte-stream,alignment=au ! ";
         }
         if (has_decoder()) {
@@ -444,6 +578,12 @@ struct Session {
             g_object_get(decoder, "device", &device, nullptr);
             dec_device = device ? device : "";
             g_free(device); gst_object_unref(decoder);
+        }
+        if (options.save_bitstream) {
+            auto* parser = gst_bin_get_by_name(GST_BIN(pipeline), "parser");
+            auto* pad = gst_element_get_static_pad(parser, "src");
+            gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, save_probe, this, nullptr);
+            gst_object_unref(pad); gst_object_unref(parser);
         }
         if (app_input()) g_signal_connect(source, "need-data", G_CALLBACK(need_data), this);
         connect_sink(pipeline, "result", has_decoder() ? decoded_sample : encoded_sample, this);
@@ -519,6 +659,8 @@ struct Session {
         finished = monotonic_ms();
         gst_object_unref(bus);
         gst_element_set_state(pipeline, GST_STATE_NULL);
+        raw.stop();
+        if (bitstream.is_open()) { bitstream.close(); bitstream_index.close(); }
         getrusage(RUSAGE_SELF, &after);
         auto millis = [](const timeval& t) { return t.tv_sec * 1000. + t.tv_usec / 1000.; };
         cpu_ms = millis(after.ru_utime) + millis(after.ru_stime) - millis(before.ru_utime) - millis(before.ru_stime);
@@ -566,6 +708,7 @@ struct Session {
             if (!first) rows << ',';
             first = false;
             rows << "{\"pts_ns\":" << item.first << ",\"source_index\":" << f.source_index
+                 << ",\"encoded_bytes\":" << f.encoded_bytes
                  << ",\"y_squared_error\":" << f.y.squared << ",\"y_pixels\":" << f.y.pixels
                  << ",\"encode_ms\":" << number(et)
                  << ",\"source_to_decode_ms\":" << number(f.decode_out >= f.source ? f.decode_out - f.source : NAN)
@@ -578,8 +721,8 @@ struct Session {
                  << ",\"decode_ms\":" << number(dt) << ",\"y_psnr_db\":" << (f.quality ? number(f.y.psnr()) : "null") << '}';
         }
         double efps = enc_window / double(options.seconds), dfps = dec_window / double(options.seconds);
-        const double threshold = realtime() ? 29.7 : 30.;
-        passed = error.empty() && eos && !cancel && finished >= end() && !invalid_timing && !frames.unmatched && !frames.duplicates &&
+        const double threshold = realtime() && finished >= end() ? fps * .99 : 0.;
+        passed = error.empty() && eos && !cancel && (options.frame_limit ? frames.rows.size() == size_t(options.frame_limit) : finished >= end()) && !invalid_timing && !frames.unmatched && !frames.duplicates &&
             !frames.rows.empty() && !missing_encode && !missing_decode && !missing_quality &&
             (!has_encoder() || efps >= threshold) && (!has_decoder() || dfps >= threshold) &&
             (!quality() || quality_count > 0);
@@ -597,11 +740,12 @@ struct Session {
         std::string version_text = version;
         g_free(version);
         std::ostringstream out;
-        out << "{\"schema_version\":1,\"status\":" << quote(cancel ? "CANCELLED" : passed ? "PASS" : "FAIL")
+        out << "{\"schema_version\":2,\"status\":" << quote(cancel ? "CANCELLED" : passed ? "PASS" : "FAIL")
             << ",\"error\":" << quote(error) << ",\"mode\":" << quote(options.mode)
             << ",\"platform\":" << quote(std::string(system.machine) + " " + system.release + " " + system.nodename)
             << ",\"gstreamer\":" << quote(version_text)
-            << ",\"width\":1920,\"height\":1080,\"input_fps\":30,\"requested_bitrate\":" << options.bitrate
+            << ",\"width\":" << width << ",\"height\":" << height << ",\"input_fps\":" << number(fps)
+            << ",\"fps_num\":" << options.fps_num << ",\"fps_den\":" << options.fps_den << ",\"requested_bitrate\":" << options.bitrate
             << ",\"warmup_seconds\":" << options.warmup << ",\"measurement_seconds\":" << options.seconds
             << ",\"elapsed_seconds\":" << number(start > 0 ? (finished - start) / 1000 : 0)
             << ",\"encoder\":" << quote(has_encoder() ? options.encoder : "") << ",\"decoder\":" << quote(has_decoder() ? options.decoder : "")
@@ -639,6 +783,28 @@ struct Session {
             << ",\"decode_corpus_frames\":" << corpus.size() << ",\"decode_corpus_bytes\":" << corpus_bytes
             << ",\"latency_definition\":\"monotonic codec sink-to-src matched by PTS; includes driver queueing, excludes source Y copy; not hardware core time\""
             << ",\"quality_definition\":\"visible 8-bit Y code values without range conversion; loopback only; no quality threshold\""
+            << ",\"pixel_format\":" << quote(options.pixel_format)
+            << ",\"throughput_valid\":" << (finished >= end() ? "true" : "false")
+            << ",\"frame_limit\":" << options.frame_limit
+            << ",\"input_hevc\":" << quote(options.input_hevc)
+            << ",\"requested_bitrate_mode\":" << quote(options.bitrate_mode)
+            << ",\"requested_time_delta_rc\":" << quote(options.time_delta_rc)
+            << ",\"source_pattern\":" << quote(options.pattern)
+            << ",\"raw_storage\":" << quote(std::filesystem::path(options.input_nv12).extension() == ".zst" ? "zstandard_lossless" : "plain")
+            << ",\"raw_input_layout\":" << quote(options.input_nv12.empty() ? "not_applicable" : "linear_dmabuf_stride128_y32_uv16")
+            << ",\"raw_corpus_frames\":" << raw.frames
+            << ",\"raw_prefetch_high_water_frames\":" << raw.high_water
+            << ",\"raw_read_wait_ms\":" << number(read_wait_ms)
+            << ",\"saved_bitstream_bytes\":" << saved_bytes
+            << ",\"expected_realtime_frames\":" << size_t(std::ceil(fps * options.seconds))
+            << ",\"encode_pixels_per_second\":" << (has_encoder() ? number(efps * width * height) : "null")
+            << ",\"decode_pixels_per_second\":" << (has_decoder() ? number(dfps * width * height) : "null")
+            << ",\"first_output_ms\":" << number(first_output < 0 ? NAN : first_output - start)
+            << ",\"drain_ms\":" << number(last_input < 0 ? NAN : finished - last_input)
+            << ",\"bandwidth_100ms_bytes\":[";
+        for (size_t i = 0; i < bandwidth.size(); ++i) { if (i) out << ','; out << bandwidth[i]; }
+        out << "]"
+            << ",\"bandwidth_valid\":" << (has_encoder() && finished >= end() ? "true" : "false")
             << ",\"frames\":[" << rows.str() << "]}\n";
         return out.str();
     }
@@ -653,9 +819,16 @@ int run(const Options& options, std::atomic<bool>& cancel, View* view) {
         auto id = std::chrono::duration_cast<std::chrono::microseconds>(stamp).count();
         directory = std::filesystem::path(options.output) / (options.mode + "-" + std::to_string(id) + "-" + std::to_string(getpid()));
         std::filesystem::create_directories(directory);
-        if (options.mode == "decode") {
+        if (options.save_bitstream) {
+            session.bitstream.exceptions(std::ios::badbit | std::ios::failbit);
+            session.bitstream_index.exceptions(std::ios::badbit | std::ios::failbit);
+            session.bitstream.open(directory / "output.h265", std::ios::binary);
+            session.bitstream_index.open(directory / "output.h265.index");
+        }
+        if (!options.input_hevc.empty()) session.load_hevc();
+        if (options.mode == "decode" && options.input_hevc.empty()) {
             Options preparation = options;
-            preparation.mode = "prepare"; preparation.preview = false;
+            preparation.mode = "prepare"; preparation.preview = false; preparation.frame_limit = 0; preparation.save_bitstream = false;
             Session prepare(preparation, cancel, view);
             prepare.execute();
             if (!prepare.error.empty() || !prepare.eos || prepare.corpus.size() != 60 || prepare.corpus.front().delta || cancel)
@@ -673,6 +846,7 @@ int run(const Options& options, std::atomic<bool>& cancel, View* view) {
         session.execute();
     } catch (const std::exception& e) {
         session.fail(e.what());
+        session.raw.stop();
         if (session.pipeline) gst_element_set_state(session.pipeline, GST_STATE_NULL);
         session.finished = monotonic_ms();
     }

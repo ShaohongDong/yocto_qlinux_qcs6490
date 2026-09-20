@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Create auditable CSV/JSON and standalone plots from collected suite artifacts."""
+import argparse
+import csv
+import hashlib
+import json
+from pathlib import Path
+import statistics
+
+
+def bandwidth(report):
+    if not report.get('bandwidth_valid'):
+        return {}
+    buckets = report['bandwidth_100ms_bytes']
+    if len(buckets) != report['measurement_seconds'] * 10:
+        raise ValueError('Wrong fixed-window bucket count')
+    result = {}
+    for size in (1, 10):
+        rates = [sum(buckets[i:i + size]) * 80 / size for i in range(0, len(buckets), size)]
+        for label, value in [('min', min(rates)), ('mean', statistics.mean(rates)), ('max', max(rates))]:
+            result[f'bandwidth_{size * 100}ms_{label}_bps'] = value
+    return result
+
+
+def collect(root):
+    rows = []
+    for trial_path in sorted(root.rglob('trial.json')):
+        trial = json.loads(trial_path.read_text())
+        if 'spec' not in trial:
+            continue
+        # Only sessions referenced by the final trial record are current.
+        for saved in trial.get('reports', []):
+            tail = Path(saved['path']).parts[-3:]
+            report_path = trial_path.parent.joinpath(*tail)
+            if not report_path.exists():
+                raise ValueError('Missing referenced report: ' + str(report_path))
+            raw = report_path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != saved['sha256']:
+                raise ValueError('Report hash mismatch: ' + str(report_path))
+            report = json.loads(raw)
+            spec = trial['spec']
+            row = dict(path=str(report_path), trial_status=trial['status'], status=report['status'],
+                       phase=trial_path.parent.parent.name, setting=spec['setting'], repeat=spec['repeat'],
+                       count=spec['count'], width=report['width'], height=report['height'],
+                       input_fps=report['input_fps'], mode=report['mode'], pacing=report['pacing'],
+                       profile=report['latency_profile'], input_sha256=report['input_sha256'],
+                       binary_sha256=spec['binary_sha256'], input_hevc=report.get('input_hevc', ''),
+                       requested_bitrate=report['requested_bitrate'], bitrate_mode=report.get('requested_bitrate_mode'),
+                       time_delta_rc=report.get('requested_time_delta_rc', 'default'),
+                       measurement_seconds=report['measurement_seconds'],
+                       input_frames=report['input_frames'], encoded_frames=report['encoded_frames'],
+                       decoded_frames=report['decoded_frames'], encode_fps=report['encode_fps'], decode_fps=report['decode_fps'],
+                       missing_encoded_frames=report['missing_encoded_frames'], missing_decoded_frames=report['missing_decoded_frames'],
+                       eos=report['eos'], error=report['error'],
+                       raw_read_wait_ms=report.get('raw_read_wait_ms'), peak_rss_kib=report['process_lifetime_peak_rss_kib'],
+                       cpu_percent=report['process_cpu_percent_one_core'], throughput_valid=report.get('throughput_valid', False))
+            for kind in ('encode', 'decode', 'source_to_decode'):
+                values = report[kind + '_latency_ms'] if kind != 'source_to_decode' else report[kind + '_ms']
+                for stat in ('mean', 'p50', 'p95', 'p99', 'max'):
+                    row[kind + '_' + stat + '_ms'] = values.get(stat)
+            row.update(bandwidth(report))
+            temperatures = [zone['millidegrees_c'] / 1000 for sample in trial.get('samples', [])
+                            for zone in sample['thermal'].values() if zone['type'] == 'video-thermal']
+            row['video_temperature_max_c'] = max(temperatures) if temperatures else None
+            rows.append(row)
+    return rows
+
+
+def summarize(root, output):
+    rows = collect(root)
+    qualities = [dict(path=str(p), **{k: v for k, v in json.loads(p.read_text()).items() if k != 'frames'})
+                 for p in sorted(root.rglob('quality.json'))]
+    output.mkdir(parents=True, exist_ok=True)
+    (output / 'summary.json').write_text(json.dumps(dict(runs=rows, quality=qualities), indent=2) + '\n')
+    keys = sorted(set().union(*(row.keys() for row in rows))) if rows else ['path']
+    with (output / 'runs.csv').open('w') as stream:
+        writer = csv.DictWriter(stream, fieldnames=keys)
+        writer.writeheader(); writer.writerows(rows)
+    if qualities:
+        qkeys = ['path', 'width', 'height', 'input_fps', 'source_sha256', 'actual_bitrate',
+                 'pooled_psnr_y', 'pooled_psnr_u', 'pooled_psnr_v', 'mean_ssim_y', 'source_frames']
+        with (output / 'quality.csv').open('w') as stream:
+            writer = csv.DictWriter(stream, fieldnames=qkeys, extrasaction='ignore')
+            writer.writeheader(); writer.writerows(qualities)
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return rows, qualities
+    formal = [r for r in rows if r['phase'] == 'formal' and r['status'] == 'PASS'
+              and r['count'] == 1 and r['pacing'] == 'unpaced']
+    if formal:
+        fig, ax = plt.subplots(figsize=(9, 5))
+        for mode in ('encode', 'decode'):
+            for setting in ('default', 'performance'):
+                groups = {}
+                for row in formal:
+                    if row['mode'] == mode and row['setting'] == setting:
+                        groups.setdefault((row['width'], row['height']), []).append(row[mode + '_fps'])
+                points = sorted(groups.items(), key=lambda pair: pair[0][0] * pair[0][1])
+                ax.plot([w * h / 1e6 for (w, h), _ in points], [statistics.median(v) for _, v in points],
+                        marker='o', label=mode + ' / ' + setting)
+        ax.set(xlabel='Frame size (megapixels)', ylabel='Observed pipeline frames/s',
+               title='Single-session unpaced throughput (median across formal trials)')
+        ax.grid(alpha=.3); ax.legend(); fig.tight_layout()
+        fig.savefig(output / 'throughput.png', dpi=160); plt.close(fig)
+    if qualities:
+        groups = {}
+        for q in qualities:
+            groups.setdefault((q['source_sha256'], q['width'], q['height'], q['input_fps'], q.get('latency_profile', 'baseline'), q.get('bitrate_mode', 'default'), q.get('time_delta_rc', 'default')), []).append(q)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for (sha, w, h, fps, profile, mode, delta_rc), values in groups.items():
+            values.sort(key=lambda q: q['actual_bitrate'])
+            finite = [q for q in values if isinstance(q['pooled_psnr_y'], (int, float))]
+            ax.plot([q['actual_bitrate'] / 1e6 for q in finite], [q['pooled_psnr_y'] for q in finite],
+                    marker='.', label=f'{w}x{h}@{fps} / {sha[:6]} / {profile} / {mode} / delta-RC {delta_rc}')
+        ax.set(xlabel='Actual elementary-stream bitrate (Mbps)', ylabel='Pooled Y-PSNR (dB)',
+               title='Exact-source quality samples; identify source/profile in quality.json')
+        ax.grid(alpha=.3); ax.legend(fontsize=6); fig.tight_layout()
+        fig.savefig(output / 'rate-distortion.png', dpi=160); plt.close(fig)
+    return rows, qualities
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('root', type=Path)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    summarize(args.root, args.output)

@@ -129,5 +129,73 @@ int main() {
     diagnostic.quality_mode = "off";
     hevc::Session off(diagnostic, cancel, nullptr);
     CHECK(off.has_decoder() && off.loopback() && !off.quality());
+    hevc::RawLayout full_hd(1920, 1080), odd_stride(130, 722);
+    CHECK(full_hd.stride == 1920 && full_hd.y_rows == 1088 && full_hd.uv_rows == 544);
+    CHECK(full_hd.bytes >= 1920 * 1632 && full_hd.bytes % 4096 == 0);
+    CHECK(odd_stride.stride == 256 && odd_stride.y_rows == 736 && odd_stride.uv_rows == 368);
+    // Non-default size and rational frame timing, finite-run acceptance.
+    hevc::Options dynamic;
+    dynamic.width = 640; dynamic.height = 480;
+    dynamic.fps_num = 60000; dynamic.fps_den = 1001;
+    dynamic.mode = "encode"; dynamic.frame_limit = 1; dynamic.warmup = 0;
+    hevc::Session finite(dynamic, cancel, nullptr);
+    finite.start = 1000; finite.finished = 1010; finite.eos = true;
+    auto& one = finite.frames.rows[0];
+    one.source = one.encode_in = 1001; one.encode_out = 1003;
+    auto finite_report = finite.report(passed);
+    CHECK(passed && finite.raw_frame_bytes == 460800);
+    CHECK(finite_report.find("\"fps_den\":1001") != std::string::npos);
+    finite.options.frame_limit = 2; finite.report(passed); CHECK(!passed);
+    auto root = std::filesystem::temp_directory_path() / ("hevc-engine-test-" + std::to_string(getpid()));
+    std::filesystem::create_directory(root);
+    auto raw_path = root / "raw";
+    { std::ofstream raw_file(raw_path, std::ios::binary); raw_file << "abcdefgh"; }
+    {
+        hevc::RawInput raw;
+        raw.open(raw_path.string(), 4);
+        CHECK(raw.frames == 2);
+        CHECK(raw.next() == std::vector<uint8_t>({'a','b','c','d'}));
+        CHECK(raw.next() == std::vector<uint8_t>({'e','f','g','h'}));
+        CHECK(raw.next() == std::vector<uint8_t>({'a','b','c','d'}));
+        raw.stop(); CHECK(raw.high_water <= 4);
+    }
+    rejected = false;
+    try { hevc::RawInput raw; raw.open(raw_path.string(), 3); }
+    catch (const std::runtime_error&) { rejected = true; }
+    CHECK(rejected);
+    CHECK(hevc::Session::hash_file(raw_path.string()) == "9c56cc51b374c3ba189210d5b6d4bf57790d351c96c47c02190ecf1e430635ab");
+    auto compressed_path = root / "raw.zst";
+    std::vector<uint8_t> zipped(ZSTD_compressBound(8));
+    size_t zipped_size = ZSTD_compress(zipped.data(), zipped.size(), "abcdefgh", 8, 1);
+    CHECK(!ZSTD_isError(zipped_size));
+    { std::ofstream out(compressed_path, std::ios::binary); out.write(reinterpret_cast<char*>(zipped.data()), zipped_size); }
+    CHECK(hevc::Session::hash_raw(compressed_path) == hevc::Session::hash_file(raw_path));
+    {
+        hevc::RawInput raw; raw.open(compressed_path, 4);
+        CHECK(raw.frames == 2);
+        CHECK(raw.next() == std::vector<uint8_t>({'a','b','c','d'}));
+        CHECK(raw.next() == std::vector<uint8_t>({'e','f','g','h'}));
+        CHECK(raw.next() == std::vector<uint8_t>({'a','b','c','d'}));
+    }
+    std::filesystem::resize_file(compressed_path, zipped_size - 1);
+    rejected = false;
+    try { hevc::Session::hash_raw(compressed_path); } catch (const std::runtime_error&) { rejected = true; }
+    CHECK(rejected);
+    // Decode order differs from presentation order; PTS mapping must survive.
+    { std::ofstream index(raw_path.string() + ".index"); index << "0 2 0\n2 2 3\n4 2 1\n6 2 2\n"; }
+    dynamic.mode = "decode"; dynamic.input_hevc = raw_path;
+    hevc::Session indexed(dynamic, cancel, nullptr); indexed.load_hevc();
+    CHECK(indexed.corpus.size() == 4 && indexed.corpus[1].presentation == 3);
+    { std::ofstream index(raw_path.string() + ".index"); index << "0 2 0\n2 6 0\n"; }
+    rejected = false;
+    try { hevc::Session invalid(dynamic, cancel, nullptr); invalid.load_hevc(); }
+    catch (const std::runtime_error&) { rejected = true; }
+    CHECK(rejected);
+    { std::ofstream index(raw_path.string() + ".index"); index << "0 8 0\n99"; }
+    rejected = false;
+    try { hevc::Session invalid(dynamic, cancel, nullptr); invalid.load_hevc(); }
+    catch (const std::runtime_error&) { rejected = true; }
+    CHECK(rejected);
+    std::filesystem::remove_all(root);
     std::cout << "engine: acceptance thresholds, missing frames, cancellation, EOS, drain window, NV12 stride/crop PASS\n";
 }
