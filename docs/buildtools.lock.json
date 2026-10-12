@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "component": "qcom-sdk-buildtools",
+  "sdk_distro": "qcom-distro",
+  "sdk_version": "2.0",
+  "host_architecture": "x86_64",
+  "source": {
+    "type": "git-snapshot",
+    "commit": "74abaadcac77ff94e13405aa076c689189b24ecc",
+    "path": "buildtools",
+    "tree": "71b8311398bdc147e06869999815b007bea8b4c5"
+  },
+  "artifact": {
+    "filename": "qcom-buildtools-2.0-74abaadcac77.tar.gz",
+    "sha256": "9cb0441f9df4a26ae9117b08d61fdca61da85b1d84a085999a2d9d97e269cf48",
+    "size_bytes": 354766095,
+    "tracked_file_count": 3378
+  },
+  "snapshot_install_prefix": "/home/dsh/Desktop/qcom_sdk",
+  "vendor_installer_url": null,
+  "vendor_installer_sha256": null
+}

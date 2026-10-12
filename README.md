@@ -27,10 +27,18 @@ it is defined because the SDK environment rejects it.
   can carry its own userspace sources, systemd units, kernel configuration,
   external modules, and kernel/device-tree patches.
 - `workspace/` is managed by `devtool` for checked-out recipe sources.
+- `buildtools/` contains locally installed SDK host tools and is ignored by Git.
+  Its pinned artifact identity and recovery procedure are documented in
+  [SDK host tools](docs/buildtools.md).
 - `tmp/`, `downloads/`, `sstate-cache/`, and `cache/` are generated build state.
 
 Do not edit generated directories directly. Make persistent changes in the
 appropriate layer or through `devtool`.
+
+A source checkout does not include the installed `buildtools/` directory.
+Install the matching Qualcomm SDK tools or restore the pinned artifact before
+using the eSDK environment setup script. Removing Git tracking does not remove
+existing local tools or repair an incomplete SDK installation.
 
 ## Build Q6A Images
 

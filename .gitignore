@@ -8,6 +8,9 @@
 # Local build and validation artifacts
 /artifacts/
 
+# Installed SDK host tools; provenance is tracked in docs/buildtools.lock.json
+/buildtools/
+
 # devtool workspace and BitBake runtime files
 /workspace/
 /bitbake-cookerdaemon.log
