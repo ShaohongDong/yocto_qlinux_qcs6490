@@ -359,3 +359,23 @@ Y/U/V PSNR、Y-SSIM 验证，再关闭保存进行吞吐测量，区分两者的
 
 内置 `run-suite` 的 smoke/scan/full 编码用例显式设置时间差 RC 为 off；
 custom 用例尊重 JSON 的选择，CLI/GUI 的 default 仍保留驱动默认值以便历史对照。
+
+### Shared video library
+
+Host video assets are now stored under `/video`, independently of the SDK at
+`/data/qcom_sdk`. Use `/video/metadata/baseline.json` for the exact frozen input
+IDs, content hashes, relative paths and recovery status. Join each relative path
+with `/video`; an unavailable baseline must not be replaced with a similar clip.
+
+```sh
+python /video/tools/library.py list
+python /video/tools/library.py lookup /home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/real-decode/drone-1080p60-b.h265
+```
+
+For host corpus generation, pass the resolved library source to
+`prepare-corpus --natural-source` and its provenance record to `--provenance`.
+For board runs, copy the selected asset to the explicitly configured board input
+path; `/var/lib/hevc-benchmark/...` names still denote board storage.
+Historical board reports stay under `/data/qcom_sdk/artifacts`; relocated saved
+video outputs and their AU indexes are mapped by `/video/metadata/migration.json`.
+No compatibility symlinks are created for old host media paths.

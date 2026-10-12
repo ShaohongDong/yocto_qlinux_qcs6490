@@ -5,8 +5,8 @@ FPGA GOLDEN 建立方法。数据快照来自 2026-09-20 完成的真实场景�
 Q6A 数据用于确定吞吐、延迟、码率和画质量级，并不要求 FPGA 编码器生成与
 Q6A 逐字节相同的码流。
 
-完整板测报告位于 `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/REPORT.md`。
-`/home/dsh/Desktop/qcom_sdk/artifacts/` 被仓库根目录的
+完整板测报告位于 `/data/qcom_sdk/artifacts/hevc-full/REPORT.md`。
+`/data/qcom_sdk/artifacts/` 被仓库根目录的
 `.gitignore` 排除，因此克隆源码后不会自动获得这些大文件；使用本文前应取得
 同一测试资源包并通过 manifest 中的 SHA256 校验身份。
 
@@ -104,10 +104,14 @@ GOLDEN。正式对标统一使用 `time_delta_rc=off`。
 
 当前 1080p60 保存码流的主要语法特征为 Main 8-bit 4:2:0、CTU 32x32、变换块
 4x4 至 32x32、3 列 x 1 行 tile、SAO 和 TMVP 开启、WPP 关闭。完整字段见
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/real-syntax.json`。这是 Q6A 输出样例，不要求 FPGA 复制相同
+`/data/qcom_sdk/artifacts/hevc-full/real-syntax.json`。这是 Q6A 输出样例，不要求 FPGA 复制相同
 分块或工具决策，除非项目接口规范另行锁定这些语法。
 
 ## 4. 测试资源目录
+
+视频实体统一存于 `/video`，不保留 QCOM 素材旧路径软链接。当前可用性与认证状态以
+`/video/metadata/baseline.json` 为准；缺失条目不能以新素材替代旧 GOLDEN。
+旧路径映射保存在 `/video/metadata/migration.json`，历史报告与封存证据不重写。
 
 以下测试素材、码流、报告和汇总均使用当前工作站绝对路径。换机或归档后必须
 整体重定位，并以 manifest SHA256 而不是路径字符串判断资源身份。
@@ -116,31 +120,29 @@ GOLDEN。正式对标统一使用 `time_delta_rc=off`。
 
 | 路径 | 内容 | 关键身份 |
 |---|---|---|
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-1080p60/drone-1080p60.nv12` | 3600 帧连续航拍，1920x1080@60，11,197,440,000 字节 | SHA256 `05f9dd25c4da1d5c4931cc593c439ee37d7896efe8e9f118c4e32e31ca7a55c6` |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/drone-1080p60.nv12.zst` | 上述原始帧的单帧 Zstandard 无损压缩文件 | 解压后必须得到上一行 SHA256 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/drone-2160p30.nv12` | 原始 4K60 航拍取偶数序号帧，3840x2160@30，1800 帧 | SHA256 `5fcffbbf6d0233265396cfe3565a4f179552b4448449fdbf5d872e3086bc4382` |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/drone-2160p30.nv12.zst` | 上述 4K30 原始帧的无损压缩文件 | SHA256 `1d5f659d5aa63c474fdc94fa0feb9c94824b0e80765c50291792b08593105db0` |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-landscape/swiss-mountains-65s.nv12` | 1920x1080@30，1950 帧山景 | SHA256 `54cee0fc7c0cfa1f0a55af1a4f17fee06278b5d19a42a704b2f043377cbd6836` |
+| `/video/raw/baseline/drone-1080p60.nv12` | 3600 帧连续航拍，1920x1080@60，11,197,440,000 字节 | SHA256 `05f9dd25c4da1d5c4931cc593c439ee37d7896efe8e9f118c4e32e31ca7a55c6` |
+| `/video/legacy/qcom/hevc-full/drone-1080p60.nv12.zst` | 上述原始帧的单帧 Zstandard 无损压缩文件 | 解压后必须得到上一行 SHA256 |
+| `/video/legacy/qcom/hevc-full/drone-2160p30.nv12` | 原始 4K60 航拍取偶数序号帧，3840x2160@30，1800 帧 | SHA256 `5fcffbbf6d0233265396cfe3565a4f179552b4448449fdbf5d872e3086bc4382` |
+| `/video/legacy/qcom/hevc-full/drone-2160p30.nv12.zst` | 上述 4K30 原始帧的无损压缩文件 | SHA256 `1d5f659d5aa63c474fdc94fa0feb9c94824b0e80765c50291792b08593105db0` |
+| `/video/raw/baseline/swiss-mountains-65s.nv12` | 1920x1080@30，1950 帧山景 | SHA256 `54cee0fc7c0cfa1f0a55af1a4f17fee06278b5d19a42a704b2f043377cbd6836` |
 
 来源、许可、转换方法和原始媒体 SHA256 分别记录在：
 
-- `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-1080p60/manifest.json` 和
-  `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-1080p60/ATTRIBUTION.txt`；
-- `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/drone-2160p30-manifest.json`；
-- `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-landscape/manifest.json` 和
-  `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-landscape/ATTRIBUTION.txt`。
+- `/video/legacy/qcom/hevc-full/corpus-1080/manifest.json`（保留航拍来源与转换参数）；
+- `/video/legacy/qcom/hevc-full/drone-2160p30-manifest.json`；
+- `/video/metadata/provenance/swiss_historical.json`（恢复的历史来源记录）。
 
 航拍原片为 60000/1001 fps。测试按 60 fps 重放，相当于 1.001 倍速，不插帧、
 不补帧；4K30 输入选取原片序号 0、2、...、3598，不做空间缩放。
 
 ### 4.2 固定解码输入
 
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/real-decode/` 是 FPGA 解码器首选的真实场景候选向量：
+`/video/legacy/qcom/hevc-full/real-decode/` 是 FPGA 解码器首选的真实场景候选向量：
 
 | 文件 | 规格 | 字节数 | SHA256 |
 |---|---|---:|---|
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/real-decode/drone-1080p60-b.h265` | Main 8-bit，1920x1080@60，3600 帧，含 B 帧 | 61,038,402 | `926465cb672cd28584fac76cdcd73ba48c7e60b55b3e40bc1adcc7378099b2b2` |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/real-decode/drone-2160p60-b.h265` | Main 8-bit，3840x2160@60，3600 帧，含 B 帧 | 91,488,553 | `028db6fe5d04c7889d8aac3d59af03707e1e6a062c7cb4efbd48c570e9a331d4` |
+| `/video/legacy/qcom/hevc-full/real-decode/drone-1080p60-b.h265` | Main 8-bit，1920x1080@60，3600 帧，含 B 帧 | 61,038,402 | `926465cb672cd28584fac76cdcd73ba48c7e60b55b3e40bc1adcc7378099b2b2` |
+| `/video/legacy/qcom/hevc-full/real-decode/drone-2160p60-b.h265` | Main 8-bit，3840x2160@60，3600 帧，含 B 帧 | 91,488,553 | `028db6fe5d04c7889d8aac3d59af03707e1e6a062c7cb4efbd48c570e9a331d4` |
 
 每个 `.h265` 必须与同名 `.h265.index` 和 `.h265.probe.json` 一起使用：
 
@@ -157,21 +159,21 @@ GOLDEN。正式对标统一使用 `time_delta_rc=off`。
 
 | 目录 | 用途 |
 |---|---|
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/` | 每次板测的 `trial.json`、`report.json`、控制读回、逐秒采样、逐帧时序、保存码流和画质结果 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/summary/runs.csv` | 每个会话的一行性能摘要 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/summary/summary.json` | 当前单路交付的完整机器可读汇总 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/summary/quality.csv` | 同源完整画质摘要 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/summary/real-capacity.png` | 单路无节流容量图 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/summary/real60-timeline.png` | 1080p60 的 100 ms 带宽和逐帧延迟时序 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/audit.json` | 报告哈希、输入哈希、控制读回、帧计数和系统设置恢复审计 |
-| `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/restore-audit.json` | 最终 CPU governor、VPU 投票和残留测试进程检查 |
+| `/data/qcom_sdk/artifacts/hevc-full/delivery/` | 每次板测的 `trial.json`、`report.json`、控制读回、逐秒采样、逐帧时序、保存码流和画质结果 |
+| `/data/qcom_sdk/artifacts/hevc-full/summary/runs.csv` | 每个会话的一行性能摘要 |
+| `/data/qcom_sdk/artifacts/hevc-full/summary/summary.json` | 当前单路交付的完整机器可读汇总 |
+| `/data/qcom_sdk/artifacts/hevc-full/summary/quality.csv` | 同源完整画质摘要 |
+| `/data/qcom_sdk/artifacts/hevc-full/summary/real-capacity.png` | 单路无节流容量图 |
+| `/data/qcom_sdk/artifacts/hevc-full/summary/real60-timeline.png` | 1080p60 的 100 ms 带宽和逐帧延迟时序 |
+| `/data/qcom_sdk/artifacts/hevc-full/audit.json` | 报告哈希、输入哈希、控制读回、帧计数和系统设置恢复审计 |
+| `/data/qcom_sdk/artifacts/hevc-full/restore-audit.json` | 最终 CPU governor、VPU 投票和残留测试进程检查 |
 
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-quality-rc/` 和
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-rc-probe/` 中显式关闭 time-delta RC
+`/data/qcom_sdk/artifacts/hevc-full/delivery/real-quality-rc/` 和
+`/data/qcom_sdk/artifacts/hevc-full/delivery/real-rc-probe/` 中显式关闭 time-delta RC
 的保存码流及 `quality/quality.json` 可作为编码器比较样例。旧目录
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-first/`、
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real60-first/`、
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-rate/` 使用旧输入或默认
+`/data/qcom_sdk/artifacts/hevc-full/delivery/real-first/`、
+`/data/qcom_sdk/artifacts/hevc-full/delivery/real60-first/`、
+`/data/qcom_sdk/artifacts/hevc-full/delivery/real-rate/` 使用旧输入或默认
 RC 路径，只能用于故障诊断。
 
 建议优先使用以下保存码流作为 Q6A 编码参考样例；表中 SHA256 是码流本身，
@@ -179,13 +181,13 @@ RC 路径，只能用于故障诊断。
 
 | 配置 | 保存码流绝对路径 | 码流 SHA256 |
 |---|---|---|
-| 1080p60 VBR 4 Mbps | `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-quality-rc/custom/fbe7e6db150c20af/session-0-1789893309623954448/loopback-1789893309648101-5796/output.h265` | `c7b388fc602a347a45a75df3488f3a98a70481378789ad69ac4d98d030f56171` |
-| 1080p60 VBR 8 Mbps | `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-rc-probe/custom/3907050ae7ddbaa9/session-0-1789893049153757412/loopback-1789893049178437-5595/output.h265` | `be224fe92cb599e645868b969287e3dff1d32a35f269d7dc8baec17c803a0d01` |
-| 1080p60 VBR 16 Mbps | `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-quality-rc/custom/ea70f46f698e71fd/session-0-1789893419205197375/loopback-1789893419229629-5820/output.h265` | `928176593e94b3266f8f8bfcab6ec6f2b1576b835db8fc8d97895931e83cf467` |
-| 1080p60 CBR 8 Mbps | `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-rc-probe/custom/f77540d2b6209ce3/session-0-1789893159025132422/loopback-1789893159049596-5632/output.h265` | `d7ad5e733f6a0e99557efaeb0a3f0453e096929efe77c65328009570ff42e732` |
-| 4K30 VBR 16 Mbps | `/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/delivery/real-4k-bounded/custom/6afc9e0e23c2498a/session-0-1789896069521722926/loopback-1789896069546473-6735/output.h265` | `da51bec1172e11bbc1bfd8e41230bef1f0aecf5b0d432e19c6544611841683d1` |
+| 1080p60 VBR 4 Mbps | `/video/legacy/qcom/hevc-full/delivery/real-quality-rc/custom/fbe7e6db150c20af/session-0-1789893309623954448/loopback-1789893309648101-5796/output.h265` | `c7b388fc602a347a45a75df3488f3a98a70481378789ad69ac4d98d030f56171` |
+| 1080p60 VBR 8 Mbps | `/video/legacy/qcom/hevc-full/delivery/real-rc-probe/custom/3907050ae7ddbaa9/session-0-1789893049153757412/loopback-1789893049178437-5595/output.h265` | `be224fe92cb599e645868b969287e3dff1d32a35f269d7dc8baec17c803a0d01` |
+| 1080p60 VBR 16 Mbps | `/video/legacy/qcom/hevc-full/delivery/real-quality-rc/custom/ea70f46f698e71fd/session-0-1789893419205197375/loopback-1789893419229629-5820/output.h265` | `928176593e94b3266f8f8bfcab6ec6f2b1576b835db8fc8d97895931e83cf467` |
+| 1080p60 CBR 8 Mbps | `/video/legacy/qcom/hevc-full/delivery/real-rc-probe/custom/f77540d2b6209ce3/session-0-1789893159025132422/loopback-1789893159049596-5632/output.h265` | `d7ad5e733f6a0e99557efaeb0a3f0453e096929efe77c65328009570ff42e732` |
+| 4K30 VBR 16 Mbps | `/video/legacy/qcom/hevc-full/delivery/real-4k-bounded/custom/6afc9e0e23c2498a/session-0-1789896069521722926/loopback-1789896069546473-6735/output.h265` | `da51bec1172e11bbc1bfd8e41230bef1f0aecf5b0d432e19c6544611841683d1` |
 
-`/home/dsh/Desktop/qcom_sdk/artifacts/hevc-full/excluded-by-scope/` 保存用户明确排除的双路原始记录。该目录
+`/data/qcom_sdk/artifacts/hevc-full/excluded-by-scope/` 保存用户明确排除的双路原始记录。该目录
 不得进入单路 GOLDEN、性能汇总或验收结论。
 
 ## 5. GOLDEN 分层
