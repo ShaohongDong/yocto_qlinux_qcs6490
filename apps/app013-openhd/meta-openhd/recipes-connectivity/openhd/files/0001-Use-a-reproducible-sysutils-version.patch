@@ -1,0 +1,34 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] sysutils: allow a reproducible source-derived build ID
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -118,6 +118,7 @@
+             -DVERSION_FILE=${BUILD_VERSION_FILE}
+             -DOUTPUT_HEADER=${GENERATED_VERSION_HEADER}
+             -DBASE_VERSION=${PROJECT_VERSION}
++            -DBUILD_ID=${OPENHD_BUILD_ID}
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/increment_build_version.cmake
+     BYPRODUCTS ${BUILD_VERSION_FILE} ${GENERATED_VERSION_HEADER}
+     COMMENT "Updating build version"
+--- a/tools/increment_build_version.cmake
++++ b/tools/increment_build_version.cmake
+@@ -10,6 +10,15 @@
+     message(FATAL_ERROR "BASE_VERSION is not set")
+ endif()
+ 
++# A source-derived ID remains stable across clean and incremental builds.
++if(DEFINED BUILD_ID AND NOT "${BUILD_ID}" STREQUAL "")
++    file(WRITE "${VERSION_FILE}" "${BUILD_ID}\n")
++    file(WRITE "${OUTPUT_HEADER}"
++        "#pragma once\n"
++        "#define OPENHD_SYS_UTILS_VERSION \"${BASE_VERSION}.${BUILD_ID}\"\n")
++    return()
++endif()
++
+ set(_openhd_build_ver "")
+ 
+ if(DEFINED ENV{OPENHD_BUILD_NUMBER} AND NOT "$ENV{OPENHD_BUILD_NUMBER}" STREQUAL "")

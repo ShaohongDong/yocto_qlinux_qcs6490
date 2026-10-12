@@ -1,0 +1,24 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] telemetry: include cstdint for MavlinkSystem
+
+The routing header declares uint8_t fields but depends on standard library
+headers including the integer type definitions indirectly. Include cstdint
+explicitly to compile with GCC 15.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+---
+ OpenHD/ohd_telemetry/src/routing/MavlinkSystem.hpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/OpenHD/ohd_telemetry/src/routing/MavlinkSystem.hpp b/OpenHD/ohd_telemetry/src/routing/MavlinkSystem.hpp
+--- a/OpenHD/ohd_telemetry/src/routing/MavlinkSystem.hpp
++++ b/OpenHD/ohd_telemetry/src/routing/MavlinkSystem.hpp
+@@ -24,6 +24,7 @@
+ #ifndef OPENHD_OPENHD_OHD_TELEMETRY_SRC_ROUTING_MAVLINKSYSTEM_H_
+ #define OPENHD_OPENHD_OHD_TELEMETRY_SRC_ROUTING_MAVLINKSYSTEM_H_
+ 
++#include <cstdint>
+ #include <map>
+ #include <memory>
+ #include <vector>

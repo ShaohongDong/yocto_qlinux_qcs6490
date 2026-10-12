@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Measure a bounded local hardware-encoder trial; no RF/latency acceptance."""
+import argparse
+import fcntl
+import hashlib
+import json
+import signal
+import struct
+import time
+from pathlib import Path
+
+
+# Linux V4L2 control IDs, including this Q6A driver's private codec controls.
+CONTROLS = {
+    "video_bitrate_mode": (0x009909CE, 1),
+    "video_bitrate": (0x009909CF, 6000000),
+    "video_peak_bitrate": (0x009909D0, 6000000),
+    "video_gop_size": (0x009909CB, 14),
+    "video_b_frames": (0x009909CA, 0),
+    "prepend_sps_and_pps_to_idr": (0x00990B84, 1),
+    "vui_timing_info": (0x00992043, 1),
+    "time_delta_based_rc": (0x0099200D, 0),
+    "lowlatency_mode": (0x00992003, 1),
+}
+
+
+def read_controls(fd):
+    values = {}
+    for name, (control_id, requested) in CONTROLS.items():
+        data = bytearray(struct.pack("Ii", control_id, 0))
+        fcntl.ioctl(fd, 0xC008561B, data, True)  # VIDIOC_G_CTRL
+        values[name] = {"requested": requested, "actual": struct.unpack("Ii", data)[1]}
+    return values
+
+
+def read_stream_parameters(fd):
+    values = {}
+    for queue in (9, 10):  # CAPTURE_MPLANE and OUTPUT_MPLANE
+        data = bytearray(204)  # struct v4l2_streamparm
+        struct.pack_into("I", data, 0, queue)
+        try:
+            fcntl.ioctl(fd, 0xC0CC5615, data, True)  # VIDIOC_G_PARM
+            numerator, denominator = struct.unpack_from("II", data, 12)
+            values[str(queue)] = {"numerator": numerator, "denominator": denominator}
+        except OSError as error:
+            values[str(queue)] = {"error": str(error)}
+    return values
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", choices=("test", "uvc"), required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args()
+    model = Path("/sys/firmware/devicetree/base/model").read_text().strip("\x00\n")
+    if model != "Radxa Dragon Q6A":
+        parser.error("expected Radxa Dragon Q6A")
+    import gi
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+    Gst.init(None)
+    source = ("videotestsrc name=capture is-live=true num-buffers=300 pattern=ball"
+              if args.source == "test" else
+              "v4l2src name=capture device=/dev/video0 num-buffers=300 io-mode=mmap do-timestamp=true"
+              " ! image/jpeg,width=1920,height=1080,framerate=30/1 ! jpegdec ! videoconvert")
+    controls = "controls," + ",".join(f"{name}={value}" for name, (_, value) in CONTROLS.items())
+    description = (source + " ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1"
+                   f' ! v4l2h264enc name=hw extra-controls="{controls}"'
+                   " ! h264parse config-interval=-1"
+                   " ! video/x-h264,stream-format=byte-stream,alignment=au ! filesink name=recording")
+    pipeline = Gst.parse_launch(description)
+    encoder = pipeline.get_by_name("hw")
+    if encoder.get_property("device") != "/dev/video33":
+        parser.error("expected the Q6A hardware encoder on /dev/video33")
+    args.output_dir.mkdir(parents=False, exist_ok=False)
+    output = args.output_dir / "video.h264"
+    pipeline.get_by_name("recording").set_property("location", str(output))
+    samples = {"capture": [], "encoder_input": [], "encoder_output": []}
+
+    def probe_for(name):
+        def probe(_pad, info):
+            buffer = info.get_buffer()
+            if buffer is not None:
+                samples[name].append({"pts_ns": int(buffer.pts),
+                                      "bytes": int(buffer.get_size()),
+                                      "arrival_ns": time.monotonic_ns()})
+            return Gst.PadProbeReturn.OK
+        return probe
+
+    for name, element, pad in (("capture", pipeline.get_by_name("capture"), "src"),
+                               ("encoder_input", encoder, "sink"),
+                               ("encoder_output", encoder, "src")):
+        element.get_static_pad(pad).add_probe(Gst.PadProbeType.BUFFER, probe_for(name))
+    report = {"schema_version": 1, "evidence": "local_encoder_preflight",
+              "source": args.source, "pipeline": description, "output": str(output),
+              "requested_frames": 300, "requested_fps": 30, "requested_bitrate_bps": 6000000,
+              "requested_keyframe_interval": 15, "controls": {}, "stream_parameters": {},
+              "wireless_qualified": False, "glass_to_glass_tested": False,
+              "controls_read_back": False, "displayed_fps_tested": False,
+              "pending": ["bitstream_analysis",
+                          "steady_state_capture_timing", "openhd_managed_pipeline",
+                          "independent_receiver_acceptance"]}
+
+    def interrupted(_number, _frame):
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(number, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, interrupted)
+    bus = pipeline.get_bus()
+    started = time.monotonic()
+    error = None
+    eos = False
+    warnings = []
+    try:
+        with (args.output_dir / "gstreamer.log").open("x") as log:
+            if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("pipeline failed to enter PLAYING")
+            while time.monotonic() - started < 45:
+                message = bus.timed_pop_filtered(100 * Gst.MSECOND,
+                    Gst.MessageType.ERROR | Gst.MessageType.EOS |
+                    Gst.MessageType.WARNING | Gst.MessageType.STATE_CHANGED)
+                if message is None:
+                    continue
+                if message.type in (Gst.MessageType.ERROR, Gst.MessageType.WARNING):
+                    detail = str(message.parse_error() if message.type == Gst.MessageType.ERROR
+                                 else message.parse_warning())
+                    log.write(detail + "\n")
+                    if message.type == Gst.MessageType.ERROR:
+                        raise RuntimeError(detail)
+                    warnings.append(detail)
+                elif message.type == Gst.MessageType.EOS:
+                    eos = True
+                    break
+                elif message.type == Gst.MessageType.STATE_CHANGED and message.src == pipeline:
+                    _, new, _ = message.parse_state_changed()
+                    if new == Gst.State.PLAYING:
+                        fd = encoder.get_property("device-fd")
+                        report["controls"] = read_controls(fd)
+                        report["stream_parameters"] = read_stream_parameters(fd)
+                        report["controls_read_back"] = all(
+                            item["actual"] == item["requested"]
+                            for item in report["controls"].values())
+                        if not report["controls_read_back"]:
+                            raise RuntimeError("hardware encoder control readback mismatch")
+            if not eos:
+                raise RuntimeError("45-second pipeline timeout")
+    except (Exception, KeyboardInterrupt) as failure:
+        error = type(failure).__name__ + ": " + str(failure)
+    finally:
+        pipeline.set_state(Gst.State.NULL)
+    report.update(elapsed_wall_seconds=time.monotonic() - started, error=error,
+                  eos=eos, pipeline_warnings=warnings, samples=samples,
+                  buffer_counts={name: len(values) for name, values in samples.items()})
+    if output.exists():
+        report.update(output_bytes=output.stat().st_size,
+                      output_sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+    report["result"] = ("LOCAL_PIPELINE_ONLY" if eos and not error
+                        and report["controls_read_back"] and report.get("output_bytes", 0)
+                        and not warnings else "ERROR")
+    with (args.output_dir / "report.json").open("x") as stream:
+        json.dump(report, stream, indent=2)
+        stream.write("\n")
+    print(json.dumps({key: value for key, value in report.items() if key != "samples"}))
+    return 0 if report["result"] == "LOCAL_PIPELINE_ONLY" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

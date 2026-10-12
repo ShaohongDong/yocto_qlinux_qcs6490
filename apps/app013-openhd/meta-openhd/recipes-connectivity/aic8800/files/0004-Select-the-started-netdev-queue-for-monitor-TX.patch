@@ -1,0 +1,34 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] aic8800: select the started netdev queue for monitor TX
+
+Monitor open starts netdev queue zero. The ordinary selector has no monitor
+case, marks the skb as having no station, and returns the BCMC netdev queue.
+That queue remains stopped after the managed interface was closed. Diagnostic
+packet sends fill the socket buffer (93 packets) and then return EAGAIN.
+
+Select queue zero and retain the no-station priority for the monitor callback,
+which uses the unknown-vif firmware TX queue. Limit the change to the compiled
+experimental monitor TX path. Managed/AP queues keep their original selection.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+---
+ USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c b/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c
+--- a/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c
++++ b/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c
+@@ -304,6 +304,12 @@ u16 rwnx_select_txq(struct rwnx_vif *rwnx_vif, struct sk_buff *skb)
+     }
+ 
+     switch (wdev->iftype) {
++#ifdef CONFIG_RWNX_MON_XMIT
++    case NL80211_IFTYPE_MONITOR:
++        /* Monitor open starts queue zero; do not use the stopped BCMC queue. */
++        skb->priority = PRIO_STA_NULL;
++        return 0;
++#endif
+     case NL80211_IFTYPE_STATION:
+     case NL80211_IFTYPE_P2P_CLIENT:
+     {

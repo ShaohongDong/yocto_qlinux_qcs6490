@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT
+schema_version: 1
+name: app013-openhd
+summary: Q6A onboard AIC8800 OpenHD development and raw-frame qualification
+license:
+  expression: MIT
+  files:
+  - path: LICENSE
+    md5: a630c3b1a05c9d11d492a0897a047f8c
+inputs: [LICENSE, README.md, CMakeLists.txt, src, scripts, tests, config, ci, meta-openhd]
+build:
+  system: cmake
+  source: .
+  options: [-DBUILD_TESTING=OFF]
+check: [/usr/bin/q6a-openhd-probe, --self-test]
+dependencies:
+  build: []
+  runtime:
+  - python3-core
+  - python3-json
+  - python3-crypt
+  - python3-fcntl
+  - python3-pygobject
+  - kmod
+  - iw
+  - iproute2
+  - networkmanager-nmcli
+  - systemd
+  - v4l-utils
+  - aic8800-usb
+  - gstreamer1.0
+  - gstreamer1.0-plugins-base-videotestsrc
+  - gstreamer1.0-plugins-base-videoconvertscale
+  - gstreamer1.0-plugins-good-video4linux2
+  - gstreamer1.0-plugins-good-jpeg
+  - gstreamer1.0-plugins-bad-videoparsersbad
+machines:
+  radxa-dragon-q6a:
+    kernel_providers: [linux-qcom]
+    images:
+      default: qcom-minimal-efi-sd-image
+      allowed: [qcom-minimal-efi-sd-image]
+kernel:
+  config: []
+  patches: []
+  device_tree:
+    files: []
+    patches: []
+  modules: []
+services: []

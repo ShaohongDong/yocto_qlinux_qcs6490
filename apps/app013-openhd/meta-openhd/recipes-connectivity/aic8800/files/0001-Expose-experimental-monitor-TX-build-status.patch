@@ -1,0 +1,27 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] aic8800: expose experimental monitor TX build status
+
+Expose a read-only module parameter so preflight checks inspect the loaded
+driver rather than inferring raw TX support from monitor RX capability.
+
+Upstream-Status: Inappropriate [Q6A experimental OpenHD diagnostics]
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
++++ b/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -75,6 +75,15 @@
+     u8_l wowlan_param1[] = {0x01,0x2a,0x06,0xff,0xff,0xff,0xff,0xff,0xff,
+                         0xff,0xff,0xff,0xff,0xff,0xff};
+ #endif
++
++/* Read-only build marker, not a claim about firmware/RF capability. */
++#ifdef CONFIG_RWNX_MON_XMIT
++static bool openhd_monitor = true;
++#else
++static bool openhd_monitor = false;
++#endif
++module_param(openhd_monitor, bool, 0444);
++MODULE_PARM_DESC(openhd_monitor, "Experimental monitor TX compiled (not RF qualified)");
+ 
+ static char *wifi_mac_addr = 0;
+ 

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: MIT
+# Local SDK metadata, deliberately separate from the eSDK's locked build.
+# Run with kas-container from the SDK root (mounted at /repo).
+header:
+  version: 14
+
+machine: radxa-dragon-q6a
+distro: qcom-distro
+build_system: oe
+
+repos:
+  sdk:
+    path: /repo
+    layers:
+      layers/meta-lts-mixins:
+      layers/meta-radxa-dragon:
+      layers/meta-qcom-distro:
+      layers/meta-audioreach:
+      layers/meta-openembedded/meta-filesystems:
+      layers/meta-openembedded/meta-gnome:
+      layers/meta-openembedded/meta-multimedia:
+      layers/meta-openembedded/meta-networking:
+      layers/meta-openembedded/meta-oe:
+      layers/meta-openembedded/meta-python:
+      layers/meta-openembedded/meta-xfce:
+      layers/meta-security:
+      layers/meta-security/meta-tpm:
+      layers/meta-selinux:
+      layers/meta-updater:
+      layers/meta-virtualization:
+      apps:
+      apps/app013-openhd/meta-openhd:
+  oe-core:
+    path: /repo/layers/oe-core
+    layers:
+      meta:
+  bitbake:
+    path: /repo/layers/oe-core/bitbake
+    layers:
+      .: disabled
+
+local_conf_header:
+  baseline: |
+    CONF_VERSION = "2"
+    BB_NUMBER_THREADS = "8"
+    PARALLEL_MAKE = "-j8"
+    DISTRO_FEATURES:append = " efi pam pni-names"
+    SKIP_META_VIRT_SANITY_CHECK = "1"
+    CONNECTIVITY_CHECK_URIS = ""
+    INHERIT += "image-buildinfo"
+    BB_HASHSERVE = ""
+    BB_SIGNATURE_HANDLER = "OEBasicHash"
+    # These unrelated devupstream recipes query a moving HEAD during parsing.
+    BBMASK += "/linux-qcom-next.*[.]bb(append)?$"
+    SSTATE_MIRRORS = "file://.* file:///repo/sstate-cache/PATH"
+    INHERIT += "own-mirrors"
+    SOURCE_MIRROR_URL = "file:///repo/downloads"
+    QCOM_APP = "app013-openhd"
+    QCOM_APP_IMAGE = "qcom-minimal-efi-sd-image"
+
+target:
+  - aic8800-usb
+  - qcom-selected-app

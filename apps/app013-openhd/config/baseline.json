@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "machine": "radxa-dragon-q6a",
+  "wireless_qualified": false,
+  "wireless": {"interface": "wlan0", "frequency_mhz": 5180, "width_mhz": 20, "ht_mcs": 3, "streams": 1, "fec_percent": 20, "power": "board-default"},
+  "video": {"codec": "h264", "width": 1920, "height": 1080, "fps": 30, "bitrate_bps": 6000000, "gop": 15, "b_frames": 0},
+  "acceptance": {"fec_payload_mbps": 12, "wireless_seconds": 1800, "video_seconds": 1800, "fps_min": 29.7, "glass_to_glass_p95_ms": 150, "latency_samples_min": 300, "recover_seconds_max": 3, "soak_seconds": 7200, "cold_boots": 10}
+}

@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Check a saved local encoder trial using host FFmpeg; no RF acceptance."""
+import argparse
+from fractions import Fraction
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+
+
+def parse_headers(text):
+    sps = []
+    packets = []
+    current_sps = None
+    current_packet = None
+    for line in text.splitlines():
+        match = re.search(r"\[trace_headers[^]]*\]\s+(.*)", line)
+        if not match:
+            continue
+        body = match[1]
+        field = re.fullmatch(r"\d+\s+(\w+)\s+[01]+\s*=\s*(-?\d+)", body)
+        if field:
+            name, value = field[1], int(field[2])
+            if current_sps is not None:
+                current_sps[name] = value
+            if current_packet is not None and name == "nal_unit_type":
+                current_packet.append(value)
+            continue
+        if current_sps is not None:
+            sps.append(current_sps)
+            current_sps = None
+        if body == "Sequence Parameter Set":
+            current_sps = {}
+        elif body.startswith("Packet:"):
+            current_packet = []
+            packets.append(current_packet)
+    if current_sps is not None:
+        sps.append(current_sps)
+    return sps, packets
+
+
+def progressive_vui_rate(sps):
+    # H.264 E.2.1/Table E-6: this supported progressive picture structure
+    # consumes two ticks per frame. Do not treat the tick rate as frame rate.
+    expected = {"frame_mbs_only_flag": 1, "vui_parameters_present_flag": 1,
+                "timing_info_present_flag": 1, "fixed_frame_rate_flag": 1,
+                "pic_struct_present_flag": 0}
+    if any(sps.get(name) != value for name, value in expected.items()):
+        raise ValueError("VUI picture structure is missing or outside the progressive fixed-rate baseline")
+    units = sps.get("num_units_in_tick", 0)
+    scale = sps.get("time_scale", 0)
+    if units <= 0 or scale <= 0:
+        raise ValueError("invalid VUI clock fields")
+    return Fraction(scale, 2 * units)
+
+
+def check_packet_headers(packets, keyframes):
+    if any(not any(nal in (1, 5) for nal in packet) for packet in packets):
+        raise ValueError("a traced video packet has no supported coded picture")
+    idr = [index for index, packet in enumerate(packets) if 5 in packet]
+    if idr != keyframes:
+        raise ValueError("IDR packets do not match decoded keyframes")
+    for index in idr:
+        packet = packets[index]
+        prefix = packet[:packet.index(5)]
+        if 7 not in prefix or 8 not in prefix:
+            raise ValueError("IDR is missing in-band SPS/PPS")
+
+
+def analyze(trial_dir, output_dir):
+    video = trial_dir / "video.h264"
+    original = trial_dir / "report.json"
+    report = json.loads(original.read_text())
+    video_hash = hashlib.sha256(video.read_bytes()).hexdigest()
+    if video_hash != report.get("output_sha256"):
+        raise ValueError("bitstream hash does not match the encoder trial")
+    if report.get("result") != "LOCAL_PIPELINE_ONLY" or not report.get("controls_read_back"):
+        raise ValueError("encoder trial did not finish with verified controls")
+    if report.get("requested_frames") != 300 or report.get("requested_fps", 30) != 30:
+        raise ValueError("expected the 300-frame 1080p30 preflight baseline")
+    if report.get("requested_keyframe_interval") != 15:
+        raise ValueError("expected the 15-frame keyframe baseline")
+    samples = report["samples"]
+    pts = {name: [sample["pts_ns"] for sample in samples[name]]
+           for name in ("capture", "encoder_input", "encoder_output")}
+    if any(len(values) != 300 for values in pts.values()):
+        raise ValueError("capture/input/output frame accounting is incomplete")
+    if pts["capture"] != pts["encoder_input"] or pts["encoder_input"] != pts["encoder_output"]:
+        raise ValueError("PTS changed or a frame was lost between capture and encoder output")
+    gaps = [b - a for a, b in zip(pts["capture"], pts["capture"][1:])]
+    if not gaps or min(gaps) <= 0 or max(pts["capture"]) >= 2**64 - 1:
+        raise ValueError("source PTS are missing or nonmonotonic")
+    command = ["ffprobe", "-v", "error", "-count_frames", "-show_frames",
+        "-show_entries", "stream=codec_name,width,height,field_order,nb_read_frames,r_frame_rate,avg_frame_rate:frame=key_frame,pict_type,interlaced_frame,repeat_pict",
+        "-of", "json", str(video)]
+    decoded = subprocess.run(command, capture_output=True, text=True, timeout=90)
+    (output_dir / "ffprobe.log").write_text(decoded.stderr)
+    if decoded.returncode or decoded.stderr.strip():
+        raise ValueError("decoder reported an error; see ffprobe.log")
+    info = json.loads(decoded.stdout)
+    (output_dir / "ffprobe.json").write_text(decoded.stdout)
+    streams = info.get("streams", [])
+    if len(streams) != 1 or any(streams[0].get(name) != value for name, value in
+            {"codec_name": "h264", "width": 1920, "height": 1080, "field_order": "progressive"}.items()):
+        raise ValueError("decoded stream is outside the H.264 1080p progressive baseline")
+    frames = info.get("frames", [])
+    if len(frames) != 300 or int(streams[0].get("nb_read_frames", 0)) != 300:
+        raise ValueError("the complete bitstream did not decode to 300 frames")
+    if any(frame.get("pict_type") not in ("I", "P") or frame.get("interlaced_frame") != 0
+           or frame.get("repeat_pict") != 0 for frame in frames):
+        raise ValueError("unexpected B/interlaced/repeated picture")
+    keyframes = [index for index, frame in enumerate(frames) if frame.get("key_frame")]
+    if keyframes != list(range(0, 300, 15)):
+        raise ValueError("decoded keyframes do not follow the 15-frame GOP")
+    traced = subprocess.run(["ffmpeg", "-v", "info", "-i", str(video),
+        "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "trace_headers", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=90)
+    (output_dir / "trace_headers.log").write_text(traced.stderr)
+    if traced.returncode:
+        raise ValueError("header tracing failed; see trace_headers.log")
+    sps, packets = parse_headers(traced.stderr)
+    if not sps or len(packets) != 300:
+        raise ValueError("header trace is incomplete")
+    rates = [progressive_vui_rate(header) for header in sps]
+    if any(rate != 30 for rate in rates):
+        raise ValueError("SPS VUI does not indicate 30 progressive frames per second")
+    check_packet_headers(packets, keyframes)
+    elapsed_pts = (pts["capture"][-1] - pts["capture"][0]) / 1e9
+    return {"schema_version": 1, "evidence": "local_video_bitstream_analysis",
+            "result": "LOCAL_VIDEO_BITSTREAM_ONLY", "source": report.get("source"),
+            "video_sha256": video_hash, "trial_report_sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
+            "decoded_frames": 300, "keyframe_indices": keyframes, "b_frames": 0,
+            "in_band_sps_pps_at_each_idr": True, "sps_count": len(sps),
+            "sps_vui_fields": [dict(header, progressive_fps=str(rate)) for header, rate in zip(sps, rates)],
+            "source_pts_fps": 299 / elapsed_pts, "max_source_pts_gap_ms": max(gaps) / 1e6,
+            "capture_input_output_pts_equal": True,
+            "elementary_stream_mbps": video.stat().st_size * 8 / (elapsed_pts + 1 / 30) / 1e6,
+            "ffprobe_rate_estimates": {name: streams[0].get(name) for name in ("r_frame_rate", "avg_frame_rate")},
+            "ffprobe_version": subprocess.check_output(["ffprobe", "-version"], text=True).splitlines()[0],
+            "vui_interpretation_reference": "https://ffmpeg.org/ffmpeg-bitstream-filters.html#h264_005fmetadata",
+            "wireless_qualified": False, "glass_to_glass_tested": False, "displayed_fps_tested": False,
+            "pending": ["steady_state_capture_and_bitrate", "openhd_managed_pipeline", "independent_receiver_acceptance"]}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trial-dir", required=True, type=Path)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    args = parser.parse_args()
+    args.output_dir.mkdir(exist_ok=False)
+    try:
+        report = analyze(args.trial_dir, args.output_dir)
+    except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+        report = {"result": "ERROR", "error": str(error), "wireless_qualified": False}
+    (args.output_dir / "analysis.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps({name: value for name, value in report.items() if name != "sps_vui_fields"}))
+    return 0 if report["result"] == "LOCAL_VIDEO_BITSTREAM_ONLY" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

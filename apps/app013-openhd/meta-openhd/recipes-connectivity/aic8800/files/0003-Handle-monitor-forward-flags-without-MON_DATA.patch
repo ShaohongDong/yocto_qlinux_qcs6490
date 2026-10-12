@@ -1,0 +1,67 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] aic8800: handle monitor forward flags without MON_DATA
+
+The D80 firmware reports monitor frames with both MONITOR and FORWARD flags.
+When MON_DATA is disabled, the mixed-flag branch never initializes skb_monitor
+before skb_reset_tail_pointer dereferences it. This produced a NULL access at
+rwnx_rxdataind_aicwf+0x298 in the Q6A monitor trial (status 0x81), followed by
+RX-thread and unload failures.
+
+In a monitor-only build, consume such a frame only through the monitor path.
+Keep the existing dual-delivery handling when MON_DATA is enabled, and handle
+allocation failures and an unavailable monitor vif without dereferencing NULL.
+This patch is enabled only by the app013 private layer.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+---
+ USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_rx.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_rx.c b/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_rx.c
+--- a/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_rx.c
++++ b/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_rx.c
+@@ -2277,6 +2277,12 @@ u8 rwnx_rxdataind_aicwf(struct rwnx_hw *rwnx_hw, void *hostid, void *rx_priv)
+     if(hw_rxhdr->flags_upload)
+         status |= RX_STAT_FORWARD;
+ 
++#ifndef CONFIG_RWNX_MON_DATA
++    /* Monitor firmware can set flags_upload even without a data interface. */
++    if (status & RX_STAT_MONITOR)
++        status &= ~RX_STAT_FORWARD;
++#endif
++
+     /* Check if we need to delete the buffer */
+     if (status & RX_STAT_DELETE) {
+         /* Remove the SK buffer from the rxbuf_elems table */
+@@ -2295,7 +2302,8 @@ u8 rwnx_rxdataind_aicwf(struct rwnx_hw *rwnx_hw, void *hostid, void *rx_priv)
+         rwnx_vif = rwnx_rx_get_vif(rwnx_hw, rwnx_hw->monitor_vif);
+         if (!rwnx_vif) {
+             dev_err(rwnx_hw->dev, "Received monitor frame but there is no monitor interface open, skb->len:%u\n", skb->len);
+-            goto check_len_update;
++            dev_kfree_skb(skb);
++            goto end;
+         }
+ 
+         rwnx_rx_vector_convert(rwnx_hw,
+@@ -2333,6 +2341,8 @@ u8 rwnx_rxdataind_aicwf(struct rwnx_hw *rwnx_hw, void *hostid, void *rx_priv)
+         } else {
+         #ifdef CONFIG_RWNX_MON_DATA
+         skb_monitor = skb_copy_expand(skb, rtap_len, 0, GFP_ATOMIC);
++        if (!skb_monitor)
++            goto check_len_update;
+         skb_monitor->data += (msdu_offset + 2); //sdio/usb word allign
+ 
+         //Save frame length
+@@ -2341,6 +2351,11 @@ u8 rwnx_rxdataind_aicwf(struct rwnx_hw *rwnx_hw, void *hostid, void *rx_priv)
+         #endif
+         }
+ 
++        if (!skb_monitor) {
++            dev_kfree_skb(skb);
++            goto end;
++        }
++
+         //skb_reset_tail_pointer(skb);
+         //skb->len = 0;
+         skb_reset_tail_pointer(skb_monitor);

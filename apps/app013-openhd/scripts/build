@@ -1,0 +1,40 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Independent full build; never sources or repairs the installed eSDK.
+set -euo pipefail
+app_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
+sdk_dir=$(cd -- "$app_dir/../.." && pwd)
+operation=${1:-parse}
+case "$operation" in
+    parse|isolation|driver|tools|upstream|snapshot) ;;
+    *) echo "usage: $0 parse|isolation|driver|tools|upstream|snapshot" >&2; exit 2 ;;
+esac
+export KAS_WORK_DIR=${KAS_WORK_DIR:-/data/q6a-openhd/work}
+export DL_DIR=${DL_DIR:-/data/q6a-openhd/downloads}
+export SSTATE_DIR=${SSTATE_DIR:-/data/q6a-openhd/sstate-cache}
+export KAS_CONTAINER_ENGINE=${KAS_CONTAINER_ENGINE:-docker}
+export KAS_CONTAINER_IMAGE=${KAS_CONTAINER_IMAGE:-ghcr.io/siemens/kas/kas@sha256:41ec52f63a31537979915b5ece384b8859c0cc7911471731a23fda7198a403b8}
+mkdir -p -- "$KAS_WORK_DIR" "$DL_DIR" "$SSTATE_DIR"
+python3 "$app_dir/scripts/snapshot-baseline" --sdk "$sdk_dir" --output "$KAS_WORK_DIR/baseline-lock.json"
+if [ "$operation" = snapshot ]; then exit 0; fi
+kas_wrapper=${KAS_CONTAINER:-}
+if [ -z "$kas_wrapper" ]; then
+    kas_wrapper=$(command -v kas-container || true)
+fi
+if [ -z "$kas_wrapper" ] && [ -x /data/q6a-openhd/tools/kas-container ]; then
+    kas_wrapper=/data/q6a-openhd/tools/kas-container
+fi
+if [ -z "$kas_wrapper" ]; then
+    echo "Install kas-container 5.0 or set KAS_CONTAINER to its executable path." >&2
+    exit 2
+fi
+cd -- "$sdk_dir"
+case "$operation" in
+    parse) command='bitbake -p' ;;
+    isolation) command='python3 /repo/apps/app013-openhd/ci/check-driver-isolation.py' ;;
+    driver) command='bitbake aic8800-usb' ;;
+    tools) command='bitbake qcom-selected-app' ;;
+    upstream) command='bitbake openhd openhd-sysutils' ;;
+esac
+# The host's configured loopback proxy must remain reachable inside Docker.
+exec "$kas_wrapper" --repo-ro --runtime-args "--network=host" shell --skip repos_checkout "$app_dir/ci/kas.yml" -c "$command"

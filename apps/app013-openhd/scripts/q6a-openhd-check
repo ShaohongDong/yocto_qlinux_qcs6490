@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Read-only Q6A inventory. Never interprets prerequisites as RF acceptance."""
+import argparse
+import hashlib
+import json
+import platform
+import re
+import subprocess
+from pathlib import Path
+
+
+def read_text(path):
+    try:
+        return path.read_text(errors="replace").replace("\x00", " ").strip()
+    except OSError:
+        return None
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def command(argv):
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+        return {"argv": argv, "exit_code": result.returncode,
+                "stdout": result.stdout[:40000], "stderr": result.stderr[:4000],
+                "truncated": len(result.stdout) > 40000 or len(result.stderr) > 4000}
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"argv": argv, "exit_code": None, "error": str(error)}
+
+
+def collect(root, interface, stage, run=command):
+    def file(name):
+        return root / name.lstrip("/")
+
+    net = file(f"/sys/class/net/{interface}")
+    device = (net / "device").resolve()
+    model = read_text(file("/sys/firmware/devicetree/base/model"))
+    if model is None:
+        model = read_text(file("/proc/device-tree/model"))
+    vendor, product = read_text(device / "idVendor"), read_text(device / "idProduct")
+    monitor = read_text(file("/sys/module/aic8800_fdrv/parameters/openhd_monitor"))
+    info = run(["iw", "dev", interface, "info"])
+    report = {
+        "schema_version": 1, "evidence": "read_only_board_inventory", "stage": stage,
+        "model": model, "kernel": platform.release(), "interface": interface,
+        "usb_id": f"{vendor}:{product}" if vendor and product else None,
+        "device_path": str(device), "interface_type": read_text(net / "type"),
+        "monitor_tx_compiled": monitor in ("Y", "1"),
+        "wireless_qualified": False, "glass_to_glass_tested": False,
+        "commands": {"interface": info, "regulatory": run(["iw", "reg", "get"]),
+                     "module": run(["modinfo", "aic8800_fdrv"]),
+                     "h264_encoder": run(["gst-inspect-1.0", "v4l2h264enc"]),
+                     "video_devices": run(["v4l2-ctl", "--list-devices"]),
+                     "camera_formats": run(["v4l2-ctl", "-d", "/dev/video0", "--list-formats-ext"])},
+        "firmware_sha256": {}, "prerequisite_errors": [],
+        "pending": ["independent_peer_raw_frames", "actual_tx_parameter_verification",
+                    "openhd_fec_throughput", "glass_to_glass_latency", "soak_and_recovery"],
+    }
+    for path in sorted(file("/lib/firmware/aic8800_fw/USB").rglob("*")):
+        if path.is_file():
+            report["firmware_sha256"][str(path.relative_to(root))] = sha256(path)
+    module_path = run(["modinfo", "-n", "aic8800_fdrv"])
+    if module_path.get("exit_code") == 0:
+        path = file(module_path.get("stdout", "").strip())
+        if path.is_file():
+            report["module_sha256"] = sha256(path)
+    errors = report["prerequisite_errors"]
+    if model != "Radxa Dragon Q6A":
+        errors.append("unsupported_board")
+    if (vendor, product) != ("a69c", "8d81"):
+        errors.append("unverified_usb_identity")
+    if info.get("exit_code") != 0:
+        errors.append("wireless_interface_unavailable")
+    if stage != "inventory":
+        if not report["monitor_tx_compiled"]:
+            errors.append("monitor_tx_not_compiled")
+        if report["interface_type"] != "803" or not re.search(r"\btype monitor\b", info.get("stdout", "")):
+            errors.append("interface_not_monitor")
+    if stage == "video" and report["commands"]["h264_encoder"].get("exit_code") != 0:
+        errors.append("hardware_h264_encoder_unavailable")
+    report["result"] = "PREREQUISITES_FAILED" if errors else "INVENTORY_ONLY" if stage == "inventory" else "PREREQUISITES_ONLY"
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--interface", default="wlan0")
+    parser.add_argument("--stage", choices=("inventory", "raw", "video"), default="inventory")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", args.interface):
+        parser.error("invalid interface name")
+    report = collect(Path("/"), args.interface, args.stage)
+    if args.output:
+        with args.output.open("x") as stream:
+            json.dump(report, stream, indent=2)
+            stream.write("\n")
+    else:
+        print(json.dumps(report, indent=2))
+    return 1 if report["prerequisite_errors"] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

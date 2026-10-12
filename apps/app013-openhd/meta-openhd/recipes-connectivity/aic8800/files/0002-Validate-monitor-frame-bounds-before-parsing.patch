@@ -1,0 +1,43 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] aic8800: validate monitor frame bounds before parsing
+
+Check the Radiotap header and raw frame length before any dereference.
+Linearize before the iterator and raw copy, and reject malformed metadata.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+
+--- a/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c
++++ b/usr/src/aic8800-usb-5.0+git20260123.5f7be68d-7/USB/driver_fw/drivers/aic8800/aic8800_fdrv/rwnx_tx.c
+@@ -2012,8 +2012,19 @@
+     bool offchan = false;
+     int nx_off_chan_txq_idx = NX_OFF_CHAN_TXQ_IDX;
+ 
+-    rtap_hdr = (struct ieee80211_radiotap_header*)(rtap_buf);
+-    rtap_len = ieee80211_get_radiotap_len(rtap_buf);//max_length
++    /* Check the fixed header before reading it, and reject short MAC frames. */
++    if (!pskb_may_pull(skb, sizeof(*rtap_hdr)))
++        goto free_tag;
++    rtap_buf = skb->data;
++    rtap_len = ieee80211_get_radiotap_len(rtap_buf);
++    if (rtap_len < sizeof(*rtap_hdr) || rtap_len > skb->len ||
++        skb->len > 65535 || skb->len - rtap_len < 24 ||
++        skb->len - rtap_len > 2304)
++        goto free_tag;
++    if (skb_linearize(skb))
++        goto free_tag;
++    rtap_buf = skb->data;
++    rtap_hdr = (struct ieee80211_radiotap_header *)rtap_buf;
+     frame_len = skb->len;
+ 
+     AICWFDBG(LOGINFO, "rwnx_start_monitor_if_xmit, skb_len=%d, rtap_len=%d\n", skb->len, rtap_len);
+@@ -2207,6 +2218,9 @@
+         }
+     }
+ 
++    if (ret != -ENOENT)
++        goto free_tag;
++
+     #if 0
+     // dump buffer
+     tmp_len = 128;

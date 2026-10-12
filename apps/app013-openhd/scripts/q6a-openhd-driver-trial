@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Temporarily load a verified diagnostic module and restore the disk module."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import time
+
+
+def run(argv, timeout=30):
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(f"{argv!r}: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def activate_saved_connection(interface, uuid, invoke=run,
+                              clock=time.monotonic, pause=time.sleep):
+    # Module reload recreates the netdevice. Wait for udev/NM to discover it
+    # before activating the saved connection; do not restart the NM service.
+    invoke(["udevadm", "settle", "--timeout=10"])
+    deadline = clock() + 30
+    last_error = "device not managed yet"
+    while clock() < deadline:
+        try:
+            invoke(["nmcli", "device", "set", interface, "managed", "yes"])
+            managed = invoke(["nmcli", "-g", "GENERAL.NM-MANAGED",
+                              "device", "show", interface])
+            if managed == "yes":
+                try:
+                    invoke(["nmcli", "--wait", "15", "connection", "up",
+                            "uuid", uuid, "ifname", interface])
+                except RuntimeError as error:
+                    # An interface can still be strictly unmanaged while the
+                    # asynchronous platform discovery is completing.
+                    if "unmanaged" not in str(error).lower():
+                        raise
+                    last_error = str(error)
+                else:
+                    actual_uuid = invoke(["nmcli", "-g", "GENERAL.CON-UUID",
+                                          "device", "show", interface])
+                    if actual_uuid != uuid:
+                        raise RuntimeError("saved connection UUID was not restored")
+                    return
+        except RuntimeError as error:
+            if "unmanaged" not in str(error).lower() and "not found" not in str(error).lower():
+                raise
+            last_error = str(error)
+        pause(0.5)
+    raise RuntimeError("NetworkManager readiness timeout: " + last_error)
+
+
+def stop_child(child):
+    if child.poll() is None:
+        os.killpg(child.pid, signal.SIGTERM)
+        try:
+            child.communicate(timeout=45)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.communicate()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--module", type=Path, required=True)
+    parser.add_argument("--expected-sha256", required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--monitor-runner", type=Path,
+                        default=Path(__file__).with_name("q6a-openhd-monitor"))
+    parser.add_argument("--probe", type=Path,
+                        default=Path(__file__).with_name("q6a-openhd-probe"))
+    args = parser.parse_args()
+    if not args.monitor_runner.is_file():
+        parser.error("monitor runner is missing")
+    if not args.probe.is_file() or not os.access(args.probe, os.X_OK):
+        parser.error("raw-frame probe is missing or not executable")
+    interface = "wlan0"
+    marker = Path("/sys/module/aic8800_fdrv/parameters/openhd_monitor")
+    if os.geteuid() != 0:
+        parser.error("root required")
+    if Path("/sys/firmware/devicetree/base/model").read_text().strip("\x00\n") != "Radxa Dragon Q6A":
+        parser.error("board identity mismatch")
+    device = Path(f"/sys/class/net/{interface}/device")
+    if (device / "idVendor").read_text().strip() != "a69c" or (device / "idProduct").read_text().strip() != "8d81":
+        parser.error("expected onboard AIC8800D80")
+    original = Path(run(["modinfo", "-n", "aic8800_fdrv"]))
+    if run(["modinfo", "-F", "vermagic", str(original)]) != run(["modinfo", "-F", "vermagic", str(args.module)]):
+        parser.error("module vermagic mismatch")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_sha256) or hashlib.sha256(args.module.read_bytes()).hexdigest() != args.expected_sha256:
+        parser.error("module hash mismatch")
+    if marker.exists():
+        parser.error("expected original uninstrumented module")
+    session = os.environ.get("SSH_CONNECTION", "").split()
+    if not session or not re.search(r"\bdev enp1s0\b", run(["ip", "route", "get", session[0]])):
+        parser.error("Ethernet SSH required for temporary module reload")
+    if run(["nmcli", "-g", "GENERAL.NM-MANAGED", "device", "show", interface]) != "yes":
+        parser.error("expected managed wlan0")
+    uuid = run(["nmcli", "-g", "GENERAL.CON-UUID", "device", "show", interface])
+    if not uuid or uuid == "--":
+        parser.error("expected an active saved Wi-Fi connection")
+    args.output_dir.mkdir(exist_ok=False)
+    params = {path.name: path.read_text().strip()
+              for path in Path("/sys/module/aic8800_fdrv/parameters").iterdir()
+              if path.is_file()}
+    module_args = [name + "=" + value for name, value in sorted(params.items())
+                   if value and value not in ("(null)", "<NULL>")]
+    report = {"evidence": "temporary_driver_raw_tx_diagnostic",
+              "kernel": os.uname().release, "module_sha256": args.expected_sha256,
+              "original_module": str(original),
+              "original_module_sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
+              "saved_connection_uuid": uuid, "saved_parameters": params,
+              "wireless_qualified": False, "peer_available": False,
+              "restored": False, "error": None, "restoration_errors": []}
+    removed = False
+
+    def interrupted(_number, _frame):
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(number, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, interrupted)
+    try:
+        run(["nmcli", "device", "set", interface, "managed", "no"])
+        run(["ip", "link", "set", interface, "down"])
+        run(["rmmod", "aic8800_fdrv"])
+        removed = True
+        # Normal insmod only. No force/version bypass or permanent installation.
+        run(["insmod", str(args.module)] + module_args)
+        report["loaded_marker"] = marker.read_text().strip()
+        if report["loaded_marker"] not in ("Y", "1"):
+            raise RuntimeError("compiled TX feature not active")
+        activate_saved_connection(interface, uuid)
+        run_id = os.urandom(16).hex()
+        report["run_id"] = run_id
+        trial = ["python3", str(args.monitor_runner), "--", str(args.probe), "tx",
+                 "--interface", interface, "--run-id", run_id, "--seconds", "1",
+                 "--mbps", "1", "--payload", "1200", "--mcs", "3",
+                 "--output", str(args.output_dir / "raw-tx.json")]
+        child = subprocess.Popen(trial, text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            log, _ = child.communicate(timeout=90)
+        except BaseException:
+            stop_child(child)
+            raise
+        report["trial_exit_code"] = child.returncode
+        (args.output_dir / "trial.log").write_text(log)
+        if child.returncode:
+            raise RuntimeError("monitor/raw trial failed; see trial.log")
+    except BaseException as error:
+        report["error"] = type(error).__name__ + ": " + str(error)
+    finally:
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(number, signal.SIG_IGN)
+
+        def restore_step(argv):
+            try:
+                run(argv)
+            except Exception as error:
+                report["restoration_errors"].append(str(error))
+
+        if removed:
+            if Path(f"/sys/class/net/{interface}").exists():
+                restore_step(["nmcli", "device", "set", interface, "managed", "no"])
+                restore_step(["ip", "link", "set", interface, "down"])
+            if Path("/sys/module/aic8800_fdrv").exists():
+                restore_step(["rmmod", "aic8800_fdrv"])
+            if not Path("/sys/module/aic8800_fdrv").exists():
+                restore_step(["insmod", str(original)] + module_args)
+        try:
+            activate_saved_connection(interface, uuid)
+            report["restored"] = (not marker.exists()
+                                  and Path(f"/sys/class/net/{interface}/type").read_text().strip() == "1"
+                                  and not report["restoration_errors"])
+        except Exception as error:
+            report["restoration_errors"].append(str(error))
+        report["result"] = ("LOCAL_TX_DIAGNOSTIC_ONLY"
+                            if not report["error"] and report["restored"] else "ERROR")
+        (args.output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report))
+    return 0 if report["result"] == "LOCAL_TX_DIAGNOSTIC_ONLY" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

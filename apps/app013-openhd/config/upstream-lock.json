@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "openhd": {
+    "url": "https://github.com/OpenHD/OpenHD",
+    "revision": "f07729b35e273fe3612e1aade030a7a86350d1ac",
+    "branch": "2.7-evo",
+    "archive_sha256": "2092907ce47535637713e0aff7108572559db7b27ff1ca2a1dfe5576c699dfcd"
+  },
+  "sysutils": {
+    "url": "https://github.com/OpenHD/OpenHD-SysUtils",
+    "revision": "dca9b1baa7c4cce3adf7e5bea96dddde9644582d",
+    "archive_sha256": "dc37eb004800b37b197fb6e3030e705918a7f0f4dfb5efd9cc4f6f27085d3933"
+  },
+  "kernel": {
+    "revision": "657c0f722940cd9d3b51abfa7383655ec7d2c795",
+    "version": "7.0.11-6-qcom"
+  },
+  "aic8800": {
+    "version": "5.0+git20260123.5f7be68d-7",
+    "source_deb_sha256": "7dcdd6c97c7d11fae26cde2d3038a325ebbacfd5e9613d9dc7c2c1edc2836d5f",
+    "firmware_deb_sha256": "627f4415974081eb15de261c60bd34b24247a147aa92a1b4fd3ea5cc420d8878"
+  },
+  "kas_container": "ghcr.io/siemens/kas/kas@sha256:41ec52f63a31537979915b5ece384b8859c0cc7911471731a23fda7198a403b8",
+  "ground_compatibility_verified": false,
+  "submodules": {
+    "json": {
+      "url": "https://github.com/nlohmann/json",
+      "revision": "904592d2a86bae5d9c191cdcb8f8fd9b136f71fa",
+      "path": "OpenHD/ohd_common/lib/json",
+      "archive_sha256": "c3bbed56a169c447342a59ce9518cb5996169f2993fc21c364b634c2dc893eed"
+    },
+    "spdlog": {
+      "url": "https://github.com/gabime/spdlog",
+      "revision": "fc7e9c8721b95661cc40e2d1d2329677d2a21387",
+      "path": "OpenHD/ohd_common/lib/spdlog",
+      "archive_sha256": "aff2e73fdc19f748df7b45da1151c70988fd1db70cc95764811b78cb7c17d9df"
+    },
+    "wifibroadcast": {
+      "url": "https://github.com/OpenHD/wifibroadcast",
+      "revision": "14d5fdb1b49a715529a39ce3583dae1e45776aeb",
+      "path": "OpenHD/ohd_interface/lib/wifibroadcast",
+      "archive_sha256": "e8f7c7b2cc2a2c4c9bc124bfe0badfd6631b2dec15f45897f26cef30f7fb880b"
+    },
+    "mavlink-headers": {
+      "url": "https://github.com/OpenHD/mavlink-headers",
+      "revision": "effd5bf95fad1ca524c6f1babde827cfb602f7fb",
+      "path": "OpenHD/ohd_telemetry/lib/mavlink-headers",
+      "archive_sha256": "4dd2dd5e5d2a4fdf4f5d08194db13cf0c1d5e35928b7b9e59c09c437900eb756"
+    }
+  }
+}

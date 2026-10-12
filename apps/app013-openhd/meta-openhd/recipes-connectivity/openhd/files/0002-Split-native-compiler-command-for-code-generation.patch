@@ -1,0 +1,25 @@
+From: shaohong.dong <shaohong.dong.cq@gmail.com>
+Subject: [PATCH] cmake: split the native compiler command for code generation
+
+OpenEmbedded BUILD_CXX can contain trailing whitespace or a compiler wrapper.
+Parse it into a CMake command list rather than treating the whole environment
+value as an executable filename during cross compilation.
+
+Upstream-Status: Pending
+Signed-off-by: shaohong.dong <shaohong.dong.cq@gmail.com>
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -17,7 +17,7 @@ if(CMAKE_CROSSCOMPILING)
+     # If cross-compiling, assume 'c++' is the host compiler if not specified via HOST_CXX.
+     # Users can set HOST_CXX to point to their native compiler.
+     if(DEFINED ENV{HOST_CXX})
+-        set(HOST_CXX_COMPILER $ENV{HOST_CXX})
++        separate_arguments(HOST_CXX_COMPILER UNIX_COMMAND "$ENV{HOST_CXX}")
+     else()
+         set(HOST_CXX_COMPILER "c++")
+     endif()

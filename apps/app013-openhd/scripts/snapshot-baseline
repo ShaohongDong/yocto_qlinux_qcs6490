@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Freeze the exact local metadata used by an independent OpenHD build."""
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sdk", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args()
+    sdk = args.sdk.resolve()
+    paths = subprocess.check_output([
+        "git", "-C", str(sdk), "ls-files", "-z", "--cached", "--others",
+        "--exclude-standard", "--", "layers", "apps"], text=True).split("\x00")
+    files = {}
+    for relative in sorted(set(paths) - {""}):
+        path = sdk / relative
+        if path.is_symlink():
+            files[relative] = {"symlink": os.readlink(path)}
+        elif path.is_file():
+            files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            raise RuntimeError(f"metadata file missing: {relative}")
+    report = {
+        "schema_version": 1,
+        "sdk_commit": subprocess.check_output(["git", "-C", str(sdk), "rev-parse", "HEAD"], text=True).strip(),
+        "metadata_sha256": hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest(),
+        "files": files,
+        "upstream": json.loads((sdk / "apps/app013-openhd/config/upstream-lock.json").read_text()),
+        "build_tested": False,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=args.output.parent, delete=False) as stream:
+        json.dump(report, stream, indent=2)
+        stream.write("\n")
+        temporary = stream.name
+    os.replace(temporary, args.output)
+    print(f"Metadata snapshot: {args.output} ({report['metadata_sha256']})")
+
+
+if __name__ == "__main__":
+    main()
